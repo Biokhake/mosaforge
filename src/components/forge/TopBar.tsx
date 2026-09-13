@@ -11,6 +11,7 @@ import {
   Sun,
   Undo2,
   Upload,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { downloadJson } from "@/lib/forge/io";
@@ -42,6 +43,7 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
   const importJson = useForge((s) => s.importJson);
   const registerPack = useForge((s) => s.registerPack);
   const loadPackFor = useForge((s) => s.loadPackFor);
+  const exportHangarKit = useForge((s) => s.exportHangarKit);
   const packReady = useForge((s) => s.packReady);
   const catalog = useForge((s) => s.catalog);
   const saveToLibrary = useForge((s) => s.saveToLibrary);
@@ -168,14 +170,22 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
         <Button
           variant="ghost"
           size="iconSm"
+          onClick={() => exportHangarKit(kit)}
+          title="Export kit to MOSA hangar"
+        >
+          <Send className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="iconSm"
           onClick={() => {
             downloadJson(
               `${name.replace(/\s+/g, "-").toLowerCase() || "part"}.json`,
               exportJson(),
             );
-            flash("JSON exported");
+            flash("Part JSON exported");
           }}
-          title="Export JSON"
+          title="Export this part JSON"
         >
           <Upload className="size-4" />
         </Button>

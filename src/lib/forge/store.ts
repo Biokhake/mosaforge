@@ -16,6 +16,7 @@ import {
   type Solid,
 } from "./types";
 import {
+  downloadJson,
   loadLibrary,
   loadSession,
   parsePartFile,
@@ -24,6 +25,7 @@ import {
   toPartFile,
   type SessionState,
 } from "./io";
+import { hangarSaveForKit } from "./hangar-export";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
 import {
   BUILTIN_PACK_ID,
@@ -115,6 +117,7 @@ export interface ForgeState {
   removePack: (id: string) => Promise<void>;
   exportPack: (id: string) => void;
   loadPackFor: (slot: string, kit?: string) => boolean;
+  exportHangarKit: (kit?: string) => void;
   exportJson: () => ReturnType<typeof toPartFile>;
   importJson: (raw: unknown) => boolean;
   flash: (msg: string) => void;
@@ -436,6 +439,13 @@ export const useForge = create<ForgeState>((set, get) => {
       get().loadLibraryItem(item.id);
       get().flash(`Loaded ${item.name}`);
       return true;
+    },
+    exportHangarKit: (kit) => {
+      const id = kit ?? get().kit();
+      const save = hangarSaveForKit(id, get().catalog);
+      const n = Object.keys(save.forgeParts).length;
+      downloadJson(`${id.toLowerCase()}-mosa.json`, save);
+      get().flash(`${id} → MOSA · ${n} forged slots`);
     },
     exportJson: () => {
       const s = get();

@@ -22,6 +22,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
   const removePack = useForge((s) => s.removePack);
   const exportPack = useForge((s) => s.exportPack);
   const loadPackFor = useForge((s) => s.loadPackFor);
+  const exportHangarKit = useForge((s) => s.exportHangarKit);
   const flash = useForge((s) => s.flash);
 
   const [tab, setTab] = useState<"pack" | "mine">("pack");
@@ -149,6 +150,17 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
             onClick={() => loadPackFor(slot, kit)}
           >
             Load {slot} · {kit}
+          </Button>
+        ) : null}
+        {tab === "pack" ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => exportHangarKit(kitFilter ?? kit)}
+            title="Hangar save JSON for mosa.grok.me Import"
+          >
+            Export {kitFilter ?? kit} → MOSA
           </Button>
         ) : null}
         <input
