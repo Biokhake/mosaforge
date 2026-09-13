@@ -209,4 +209,13 @@ export interface LibraryItem {
   solids: Solid[];
   updatedAt: number;
   builtin?: boolean;
+  packId?: string;
+}
+
+export interface KitPack {
+  id: string;
+  name: string;
+  builtin: boolean;
+  addedAt: number;
+  files: ForgePartFile[];
 }

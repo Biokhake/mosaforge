@@ -9,6 +9,7 @@ import {
   serialFor,
   uid,
   type GizmoMode,
+  type KitPack,
   type LibraryItem,
   type Quad,
   type Shape,
@@ -25,9 +26,17 @@ import {
 } from "./io";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
 import {
+  BUILTIN_PACK_ID,
+  catalogFromPacks,
+  clearPackExtras,
+  deleteStoredPack,
+  downloadZip,
+  loadBuiltinPack,
   loadPackExtras,
-  mergeParts,
-  savePackExtras,
+  loadStoredPacks,
+  makePack,
+  packToZip,
+  putStoredPack,
 } from "./pack";
 import type { ForgePartFile } from "./types";
 
@@ -66,7 +75,9 @@ export interface ForgeState {
   mobilePanel: null | "solids" | "inspect" | "library";
   library: LibraryItem[];
   catalog: LibraryItem[];
+  packs: KitPack[];
   packReady: boolean;
+  packBusy: boolean;
   past: Solid[][];
   future: Solid[][];
   dragging: boolean;
@@ -99,8 +110,10 @@ export interface ForgeState {
   saveToLibrary: () => void;
   loadLibraryItem: (id: string) => void;
   deleteLibraryItem: (id: string) => void;
-  setCatalog: (files: ForgePartFile[], builtin?: boolean) => void;
-  importParts: (files: ForgePartFile[]) => number;
+  bootPacks: () => Promise<void>;
+  registerPack: (name: string, files: ForgePartFile[]) => Promise<number>;
+  removePack: (id: string) => Promise<void>;
+  exportPack: (id: string) => void;
   loadPackFor: (slot: string, kit?: string) => boolean;
   exportJson: () => ReturnType<typeof toPartFile>;
   importJson: (raw: unknown) => boolean;
@@ -141,7 +154,9 @@ export const useForge = create<ForgeState>((set, get) => {
     mobilePanel: null,
     past: [],
     catalog: [],
+    packs: [],
     packReady: false,
+    packBusy: false,
     future: [],
     dragging: false,
     toast: null,
@@ -352,31 +367,64 @@ export const useForge = create<ForgeState>((set, get) => {
       saveLibrary(next);
       set({ library: next });
     },
-    setCatalog: (files, builtin = true) => {
-      const extras = builtin ? loadPackExtras() : [];
-      const base = mergeParts([], files, builtin);
-      set({ catalog: mergeParts(base, extras, false), packReady: true });
+    bootPacks: async () => {
+      set({ packBusy: true });
+      try {
+        const [builtinFiles, stored] = await Promise.all([
+          loadBuiltinPack().catch(() => [] as ForgePartFile[]),
+          loadStoredPacks(),
+        ]);
+        const packs: KitPack[] = [
+          makePack("MOSA kits", builtinFiles, true),
+          ...stored.filter((p) => p.id !== BUILTIN_PACK_ID),
+        ];
+        const extras = loadPackExtras();
+        if (extras.length) {
+          const migrated = makePack("Imported", extras);
+          await putStoredPack(migrated);
+          clearPackExtras();
+          packs.push(migrated);
+        }
+        set({ packs, catalog: catalogFromPacks(packs), packReady: true, packBusy: false });
+      } catch {
+        set({ packReady: true, packBusy: false });
+        get().flash("Kit pack failed to load");
+      }
     },
-    importParts: (files) => {
+    registerPack: async (name, files) => {
       if (!files.length) {
         get().flash("No MOSA Forge parts in file");
         return 0;
       }
-      const catalog = mergeParts(get().catalog, files, false);
-      const extras = catalog.filter((x) => !x.builtin).map((x) => ({
-        kind: "mosa-forge-part" as const,
-        version: 1,
-        name: x.name,
-        slot: x.slot,
-        kit: x.kit,
-        quad: x.quad ?? get().quad,
-        letter: x.letter ?? get().letter,
-        solids: x.solids,
-      }));
-      savePackExtras(extras);
-      set({ catalog, packReady: true });
-      get().flash(`Imported ${files.length} parts`);
+      set({ packBusy: true });
+      const packs = [...get().packs];
+      const existing = packs.find((p) => !p.builtin && p.name === name);
+      const pack = existing
+        ? { ...existing, files, addedAt: Date.now() }
+        : makePack(name, files);
+      await putStoredPack(pack);
+      const next = existing
+        ? packs.map((p) => (p.id === pack.id ? pack : p))
+        : [...packs, pack];
+      set({ packs: next, catalog: catalogFromPacks(next), packBusy: false, packReady: true });
+      get().flash(`${existing ? "Replaced" : "Registered"} ${name} · ${files.length} parts`);
       return files.length;
+    },
+    removePack: async (id) => {
+      if (id === BUILTIN_PACK_ID) return;
+      await deleteStoredPack(id);
+      const packs = get().packs.filter((p) => p.id !== id);
+      set({ packs, catalog: catalogFromPacks(packs) });
+      get().flash("Pack removed");
+    },
+    exportPack: (id) => {
+      const pack = get().packs.find((p) => p.id === id);
+      if (!pack?.files.length) {
+        get().flash("Pack is empty");
+        return;
+      }
+      downloadZip(`${pack.name.replace(/\s+/g, "-").toLowerCase() || "pack"}.zip`, packToZip(pack.files));
+      get().flash(`Exported ${pack.files.length} parts`);
     },
     loadPackFor: (slot, kit) => {
       const want = kit ?? get().kit();

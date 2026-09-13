@@ -7,7 +7,6 @@ import { SolidList } from "./SolidList";
 import { TopBar } from "./TopBar";
 import { Button } from "@/components/ui/button";
 import { hydrateForgeFromStorage, useForge } from "@/lib/forge/store";
-import { loadBuiltinPack } from "@/lib/forge/pack";
 
 type CaptureRef = MutableRefObject<(() => void) | null>;
 
@@ -53,9 +52,7 @@ export function ForgeApp() {
 
   useEffect(() => {
     hydrateForgeFromStorage();
-    void loadBuiltinPack()
-      .then((files) => useForge.getState().setCatalog(files, true))
-      .catch(() => useForge.getState().flash("Kit pack failed to load"));
+    void useForge.getState().bootPacks();
   }, []);
 
   useEffect(() => {

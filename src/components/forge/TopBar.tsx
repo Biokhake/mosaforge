@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { downloadJson } from "@/lib/forge/io";
-import { ingestFiles } from "@/lib/forge/pack";
+import { ingestBatches } from "@/lib/forge/pack";
 import { lettersFor, QUADS } from "@/lib/forge/types";
 import { GROUPS, SLOTS } from "@/lib/forge/slots";
 import { useForge } from "@/lib/forge/store";
@@ -40,7 +40,7 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
   const canRedo = useForge((s) => s.future.length > 0);
   const exportJson = useForge((s) => s.exportJson);
   const importJson = useForge((s) => s.importJson);
-  const importParts = useForge((s) => s.importParts);
+  const registerPack = useForge((s) => s.registerPack);
   const loadPackFor = useForge((s) => s.loadPackFor);
   const packReady = useForge((s) => s.packReady);
   const catalog = useForge((s) => s.catalog);
@@ -213,7 +213,8 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
             const list = [...(e.target.files ?? [])];
             e.target.value = "";
             if (!list.length) return;
-            const parts = await ingestFiles(list);
+            const batches = await ingestBatches(list);
+            const parts = batches.flatMap((b) => b.files);
             if (!parts.length) {
               useForge.getState().flash("No MOSA Forge parts in file");
               return;
@@ -222,7 +223,7 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
               importJson(parts[0]);
               return;
             }
-            importParts(parts);
+            for (const batch of batches) await registerPack(batch.name, batch.files);
             setMobilePanel("library");
           }}
         />
