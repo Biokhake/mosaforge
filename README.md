@@ -5,6 +5,7 @@
 ## 문서
 
 - [MOSA-FORGE.md](MOSA-FORGE.md) — 에디터 사용법, SS/SR/RS/RR 킷 문법, 봇 태스크 카드
+- [MOSA-HANGAR.md](MOSA-HANGAR.md) — 행거가 Forge JSON을 읽는 인제스트 브리프
 - [attachments/MOSA.md](attachments/MOSA.md) — 행거 제품 개요
 
 ## 스택

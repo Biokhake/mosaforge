@@ -4,6 +4,7 @@
 
 행거 라이브: [mosa.grok.me](https://mosa.grok.me/)  
 행거 제품 개요: [MOSA.md](attachments/MOSA.md)
+행거 인제스트 브리프: [MOSA-HANGAR.md](MOSA-HANGAR.md)
 
 ---
 

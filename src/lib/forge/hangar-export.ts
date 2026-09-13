@@ -39,6 +39,7 @@ export function hangarSaveForKit(kit: string, catalog: LibraryItem[]) {
   }
 
   return {
+    kind: "mosa-hangar",
     version: 9,
     name: kit,
     kit,
