@@ -185,7 +185,7 @@ export interface Spec {
 }
 
 export const SAVE_KIND = "mosa-forge-part";
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface ForgePartFile {
   kind: typeof SAVE_KIND;
@@ -197,6 +197,8 @@ export interface ForgePartFile {
   letter: string;
   solids: Solid[];
   specs?: Spec[];
+  /** hangar = pre defaultScaleFor. omitted / visual = ghost-sized (bot packs). */
+  space?: "hangar" | "visual";
 }
 
 export interface LibraryItem {
@@ -210,6 +212,7 @@ export interface LibraryItem {
   updatedAt: number;
   builtin?: boolean;
   packId?: string;
+  space?: "hangar" | "visual";
 }
 
 export interface KitPack {

@@ -26,6 +26,7 @@ import {
   type SessionState,
 } from "./io";
 import { hangarSaveForKit } from "./hangar-export";
+import { ensureHangarLocal, migrateItemToHangar, visualSizeToLocal, defaultScaleFor, rehomeSolids } from "./scale";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
 import {
   BUILTIN_PACK_ID,
@@ -57,6 +58,7 @@ function persist(get: () => ForgeState) {
     letter: s.letter,
     solids: s.solids,
     selectedId: s.selectedId,
+    space: "hangar",
   });
 }
 
@@ -189,7 +191,9 @@ export const useForge = create<ForgeState>((set, get) => {
       persist(get);
     },
     setSlot: (id) => {
-      set({ slot: id, mobilePanel: null });
+      const prev = get().slot;
+      if (prev === id) return;
+      set({ slot: id, solids: rehomeSolids(get().solids, prev, id), mobilePanel: null });
       persist(get);
     },
     setQuad: (q) => {
@@ -213,12 +217,15 @@ export const useForge = create<ForgeState>((set, get) => {
     select: (id) => set({ selectedId: id }),
     addSolid: (t) => {
       get().commit();
-      const { s, d } = defaultSize(t);
+      const slot = get().slot;
+      const raw = defaultSize(t);
+      const { s, d } = visualSizeToLocal(slot, raw.s, raw.d);
       const { density } = densityFor(get().letter);
       const n = segsFor(get().quad, density);
       const selected = get().selected();
+      const sc = defaultScaleFor(slot);
       const p: Solid["p"] = selected
-        ? [selected.p[0] + 0.02, selected.p[1], selected.p[2]]
+        ? [selected.p[0] + 0.02 / sc.sx, selected.p[1], selected.p[2]]
         : [0, 0, 0];
       const solid: Solid = {
         id: uid(),
@@ -258,11 +265,12 @@ export const useForge = create<ForgeState>((set, get) => {
       const cur = get().selected();
       if (!cur) return;
       get().commit();
+      const sc = defaultScaleFor(get().slot);
       const copy: Solid = {
         ...cloneSolids([cur])[0]!,
         id: uid(),
         name: cur.name + " copy",
-        p: [cur.p[0] + 0.03, cur.p[1], cur.p[2]],
+        p: [cur.p[0] + 0.03 / sc.sx, cur.p[1], cur.p[2]],
       };
       set((st) => ({
         solids: [...st.solids, copy],
@@ -341,6 +349,7 @@ export const useForge = create<ForgeState>((set, get) => {
         letter,
         solids: cloneSolids(solids),
         updatedAt: Date.now(),
+        space: "hangar",
       };
       const next = [item, ...library].slice(0, 80);
       saveLibrary(next);
@@ -352,12 +361,13 @@ export const useForge = create<ForgeState>((set, get) => {
         get().catalog.find((x) => x.id === id) ?? get().library.find((x) => x.id === id);
       if (!item) return;
       get().commit();
+      const solids = cloneSolids(ensureHangarLocal(item.slot, item.solids, item.space));
       const kitMatch = /^(SS|SR|RS|RR)([A-Z])-/.exec(item.kit);
       set({
         name: item.name,
         slot: item.slot,
-        solids: cloneSolids(item.solids),
-        selectedId: pickSelected(item.solids),
+        solids,
+        selectedId: pickSelected(solids),
         quad: item.quad ?? (kitMatch ? (kitMatch[1] as Quad) : get().quad),
         letter: item.letter ?? kitMatch?.[2] ?? get().letter,
         mobilePanel: get().mobilePanel === "library" ? "library" : null,
@@ -465,13 +475,14 @@ export const useForge = create<ForgeState>((set, get) => {
         return false;
       }
       get().commit();
+      const solids = ensureHangarLocal(file.slot, file.solids, file.space);
       set({
         name: file.name,
         slot: file.slot,
         quad: file.quad,
         letter: file.letter,
-        solids: file.solids,
-        selectedId: file.solids[0]?.id ?? null,
+        solids,
+        selectedId: solids[0]?.id ?? null,
         future: [],
       });
       persist(get);
@@ -489,19 +500,33 @@ export const useForge = create<ForgeState>((set, get) => {
 
 export function hydrateForgeFromStorage() {
   const saved = loadSession();
-  const library = loadLibrary();
+  const rawLib = loadLibrary();
+  const library = rawLib.map(migrateItemToHangar);
+  if (library.some((item, i) => item !== rawLib[i])) {
+    saveLibrary(library);
+  }
   if (!saved || !saved.solids.length) {
     useForge.setState({ library });
     return;
   }
+  const solids = ensureHangarLocal(saved.slot, saved.solids, saved.space);
   useForge.setState({
     name: saved.name,
     slot: saved.slot,
     quad: saved.quad,
     letter: saved.letter,
-    solids: saved.solids,
+    solids,
     selectedId: saved.selectedId,
     library,
+  });
+  saveSession({
+    name: saved.name,
+    slot: saved.slot,
+    quad: saved.quad,
+    letter: saved.letter,
+    solids,
+    selectedId: saved.selectedId,
+    space: "hangar",
   });
 }
 

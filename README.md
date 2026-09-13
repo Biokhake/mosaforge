@@ -23,4 +23,4 @@ npm run dev
 
 ## 산출
 
-Export JSON `kind: "mosa-forge-part"`. `specs` 배열이 행거 Spec `{ t, m, s, p, r, n, d }` 이다.
+Export JSON `kind: "mosa-forge-part"`. `specs` 배열이 행거 Spec `{ t, m, s, p, r, n, d }` 이다. 값은 소켓 로컬 · **행거 `defaultScaleFor` 적용 전**. Export kit → MOSA (`mosa-hangar`)가 슬롯 `sx,sy,sz`를 같이 넣는다.

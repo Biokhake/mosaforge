@@ -4,6 +4,7 @@
 
 행거 라이브: [mosa.grok.me](https://mosa.grok.me/)  
 행거 제품 개요: [MOSA.md](attachments/MOSA.md)
+행거 인제스트 브리프: [MOSA-HANGAR.md](MOSA-HANGAR.md)
 
 ---
 
@@ -84,9 +85,11 @@ Viewport 토글: Grid, Ghost, Edges, Socket. **Apply kit segments**는 현재 �
 
 Y-up, 오른손, Z+ = 전방 (얼굴·가슴이 +Z). 단위는 미터급. 헬름 두개골 한 변 ≈ 0.16–0.22.
 
-솔리드 `p`는 **소켓 로컬**. 행거에 꽂히면 월드 = 소켓 + `p`.
+솔리드 `p`는 **소켓 로컬 · 행거 스케일 적용 전**. 행거에 꽂히면 월드 = 소켓 + `p * defaultScaleFor(slot)`.
 
-헬름 소켓 월드 = `[0, 1.82, 0]`. 뷰포트는 이걸 원점으로 당겨서 보여 준다.
+봇 JSON은 고스트 실루엣 기준(visual)으로 쓴다. `space`를 생략하면 Forge가 인제스트 때 hangar-local로 나눈다. Forge가 다시 뽑는 파일은 `space: "hangar"`.
+
+헬름 소켓 월드 = `[0, 1.82, 0]`. 뷰포트는 이걸 원점으로 당긴 뒤 슬롯 스케일을 곱해 보여 준다. 고스트는 행거 월드 볼륨이라 파츠와 크기가 맞는다.
 
 ### 슬롯 (id · 라벨 · 소켓 월드)
 

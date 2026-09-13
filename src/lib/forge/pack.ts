@@ -8,6 +8,7 @@ import {
   type LibraryItem,
 } from "./types";
 import { parsePartFile } from "./io";
+import { ensureHangarLocal } from "./scale";
 
 const EXTRA_KEY = "mosa-forge-pack-extra";
 const DB_NAME = "mosa-forge";
@@ -23,10 +24,11 @@ export function fileToItem(file: ForgePartFile, pack: { id: string; builtin: boo
     kit: file.kit,
     quad: file.quad,
     letter: file.letter,
-    solids: cloneSolids(file.solids),
+    solids: ensureHangarLocal(file.slot, file.solids, file.space),
     updatedAt: pack.builtin ? 0 : Date.now(),
     builtin: pack.builtin,
     packId: pack.id,
+    space: "hangar",
   };
 }
 

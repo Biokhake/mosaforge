@@ -10,7 +10,7 @@ import {
 } from "./types";
 
 const LIB_KEY = "mosa-forge-library";
-const SESSION_KEY = "mosa-forge-session";
+const SESSION_KEY = "mosa-forge-session-v2";
 
 export interface SessionState {
   name: string;
@@ -19,6 +19,7 @@ export interface SessionState {
   letter: string;
   solids: Solid[];
   selectedId: string | null;
+  space?: "hangar" | "visual";
 }
 
 export function loadSession(): SessionState | null {
@@ -75,6 +76,7 @@ export function toPartFile(state: {
     letter: state.letter,
     solids,
     specs: specsFromSolids(solids),
+    space: "hangar",
   };
 }
 

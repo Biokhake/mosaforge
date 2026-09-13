@@ -1,4 +1,5 @@
 import { densityFor, kitId, segsFor, type MatKey, type Quad, type Shape, type Solid, type Vec3 } from "./types";
+import { solidsToHangarLocal } from "./scale";
 
 function slug(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "solid";
@@ -442,7 +443,7 @@ export function defaultSeedFor(slot: string): Seed {
 
 export function buildSeed(seed: Seed, quad: Quad, letter: string): Solid[] {
   const { density } = densityFor(letter);
-  return seed.build(quad, density);
+  return solidsToHangarLocal(seed.slot, seed.build(quad, density));
 }
 
 export function defaultKitLabel(quad: Quad, letter: string): string {

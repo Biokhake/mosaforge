@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import {
   ContactShadows,
@@ -11,6 +11,7 @@ import {
 import * as THREE from "three";
 import { geometryFor } from "@/lib/forge/geometry";
 import { getLineMat, getPalette } from "@/lib/forge/palette";
+import { defaultScaleFor } from "@/lib/forge/scale";
 import { GHOST_BOXES, SLOT_BY_ID } from "@/lib/forge/slots";
 import type { Solid } from "@/lib/forge/types";
 import { useForge } from "@/lib/forge/store";
@@ -124,6 +125,12 @@ function Gizmo() {
   );
 }
 
+function SlotSpace({ children }: { children: ReactNode }) {
+  const slot = useForge((s) => s.slot);
+  const sc = defaultScaleFor(slot);
+  return <group scale={[sc.sx, sc.sy, sc.sz]}>{children}</group>;
+}
+
 function Ghost() {
   const slot = useForge((s) => s.slot);
   const def = SLOT_BY_ID[slot];
@@ -226,9 +233,11 @@ export function ForgeCanvas({
       <directionalLight position={[-2.8, 1.2, -1.6]} intensity={0.32} />
       <ambientLight intensity={0.22} />
 
-      {solids.map((s) => (
-        <SolidMesh key={s.id} solid={s} selected={s.id === selectedId} showEdges={showEdges} />
-      ))}
+      <SlotSpace>
+        {solids.map((s) => (
+          <SolidMesh key={s.id} solid={s} selected={s.id === selectedId} showEdges={showEdges} />
+        ))}
+      </SlotSpace>
       <Gizmo />
       {showGhost ? <Ghost /> : null}
       {showSocket ? <SocketMark /> : null}

@@ -1,5 +1,6 @@
 import { SLOTS } from "./slots";
 import { specsFromSolids } from "./io";
+import { defaultScaleFor } from "./scale";
 import type { LibraryItem } from "./types";
 
 const SKIP = new Set([
@@ -16,11 +17,19 @@ const SKIP = new Set([
   "extra8",
 ]);
 
+type SlotPayload = {
+  variant: string;
+  visible: boolean;
+  sx?: number;
+  sy?: number;
+  sz?: number;
+};
+
 export function hangarSaveForKit(kit: string, catalog: LibraryItem[]) {
   const bySlot = new Map(
     catalog.filter((x) => x.kit === kit).map((x) => [x.slot, x]),
   );
-  const slots: Record<string, { variant: string; visible: boolean }> = {};
+  const slots: Record<string, SlotPayload> = {};
   const forgeParts: Record<string, { name: string; specs: ReturnType<typeof specsFromSolids> }> = {};
 
   for (const def of SLOTS) {
@@ -28,7 +37,8 @@ export function hangarSaveForKit(kit: string, catalog: LibraryItem[]) {
       slots[def.id] = { variant: "none", visible: false };
       continue;
     }
-    slots[def.id] = { variant: kit, visible: true };
+    const sc = defaultScaleFor(def.id);
+    slots[def.id] = { variant: kit, visible: true, sx: sc.sx, sy: sc.sy, sz: sc.sz };
     const part = bySlot.get(def.id);
     if (part) {
       forgeParts[def.id] = {
