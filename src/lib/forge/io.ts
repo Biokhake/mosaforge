@@ -89,13 +89,22 @@ export function parsePartFile(raw: unknown): ForgePartFile | null {
 }
 
 export function downloadJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function downloadHangarBrief() {
+  const res = await fetch("/MOSA-HANGAR.md");
+  if (!res.ok) throw new Error("brief missing");
+  downloadBlob("MOSA-HANGAR.md", new Blob([await res.text()], { type: "text/markdown" }));
 }
 
 export function downloadPng(filename: string, canvas: HTMLCanvasElement) {

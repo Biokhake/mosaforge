@@ -12,9 +12,10 @@ import {
   Undo2,
   Upload,
   Send,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { downloadJson } from "@/lib/forge/io";
+import { downloadHangarBrief, downloadJson } from "@/lib/forge/io";
 import { ingestBatches } from "@/lib/forge/pack";
 import { lettersFor, QUADS } from "@/lib/forge/types";
 import { GROUPS, SLOTS } from "@/lib/forge/slots";
@@ -174,6 +175,21 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
           title="Export kit to MOSA hangar"
         >
           <Send className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="iconSm"
+          onClick={async () => {
+            try {
+              await downloadHangarBrief();
+              flash("Hangar brief downloaded");
+            } catch {
+              flash("Hangar brief missing");
+            }
+          }}
+          title="Download MOSA-HANGAR.md (paste to hangar bot)"
+        >
+          <FileText className="size-4" />
         </Button>
         <Button
           variant="ghost"

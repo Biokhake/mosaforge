@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import { Download, FolderOpen, Trash2, Upload, X } from "lucide-react";
+import { Download, FileText, FolderOpen, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { downloadHangarBrief } from "@/lib/forge/io";
 import { BUILTIN_PACK_ID, filesFromDrop, ingestBatches } from "@/lib/forge/pack";
 import { useForge } from "@/lib/forge/store";
 import { cn } from "@/lib/utils";
@@ -153,15 +154,34 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
           </Button>
         ) : null}
         {tab === "pack" ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => exportHangarKit(kitFilter ?? kit)}
-            title="Hangar save JSON for mosa.grok.me Import"
-          >
-            Export {kitFilter ?? kit} → MOSA
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => exportHangarKit(kitFilter ?? kit)}
+              title="Hangar save JSON for mosa.grok.me Import"
+            >
+              Export {kitFilter ?? kit} → MOSA
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={async () => {
+                try {
+                  await downloadHangarBrief();
+                  flash("Hangar brief downloaded");
+                } catch {
+                  flash("Hangar brief missing");
+                }
+              }}
+              title="MOSA-HANGAR.md — paste into the hangar bot"
+            >
+              <FileText className="mr-1 size-3.5" />
+              Hangar brief MD
+            </Button>
+          </>
         ) : null}
         <input
           ref={fileRef}
