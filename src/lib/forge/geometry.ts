@@ -95,6 +95,20 @@ export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
       return createWedgeGeometry(a, b, c);
     case "cowl":
       return createCowlGeometry(a, b, c);
+    case "mesh": {
+      const data = solid.mesh;
+      if (!data?.pos?.length) return new THREE.BoxGeometry(0.04, 0.04, 0.04);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.Float32BufferAttribute(data.pos, 3));
+      if (data.nrm && data.nrm.length === data.pos.length) {
+        geo.setAttribute("normal", new THREE.Float32BufferAttribute(data.nrm, 3));
+      } else {
+        geo.computeVertexNormals();
+      }
+      if (data.idx && data.idx.length) geo.setIndex(data.idx);
+      geo.computeBoundingBox();
+      return geo;
+    }
     default:
       return new THREE.BoxGeometry(a, b, c);
   }

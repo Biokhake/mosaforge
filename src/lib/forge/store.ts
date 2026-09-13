@@ -8,13 +8,16 @@ import {
   segsFor,
   serialFor,
   uid,
+  type EditTool,
   type GizmoMode,
   type KitPack,
   type LibraryItem,
   type Quad,
   type Shape,
   type Solid,
+  type Vec3,
 } from "./types";
+import { convertAnchor, normalizeAnchors, snap45 } from "./bezier";
 import {
   downloadJson,
   loadLibrary,
@@ -26,6 +29,7 @@ import {
   type SessionState,
 } from "./io";
 import { hangarSaveForKit } from "./hangar-export";
+import { subtractSolids, uniteSolids } from "./csg";
 import { ensureHangarLocal, migrateItemToHangar, visualSizeToLocal, defaultScaleFor, rehomeSolids } from "./scale";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
 import {
@@ -71,6 +75,8 @@ export interface ForgeState {
   letter: string;
   solids: Solid[];
   selectedId: string | null;
+  selectedIds: string[];
+  tool: EditTool;
   mode: GizmoMode;
   snap: number;
   showGrid: boolean;
@@ -97,17 +103,25 @@ export interface ForgeState {
   setLetter: (l: string) => void;
   setName: (n: string) => void;
   setMode: (m: GizmoMode) => void;
+  setTool: (t: EditTool) => void;
   setSnap: (n: number) => void;
   toggle: (k: "showGrid" | "showGhost" | "showEdges" | "showSocket") => void;
   setTheme: (t: "dark" | "light") => void;
   setMobilePanel: (p: ForgeState["mobilePanel"]) => void;
   setDragging: (d: boolean) => void;
-  select: (id: string | null) => void;
+  select: (id: string | null, additive?: boolean) => void;
   addSolid: (t: Shape) => void;
   removeSelected: () => void;
   duplicateSelected: () => void;
   updateSolid: (id: string, patch: Partial<Solid>, record?: boolean) => void;
   replaceSolids: (solids: Solid[], record?: boolean) => void;
+  addAnchor: (id: string, local: Vec3) => void;
+  removeAnchor: (id: string, index: number) => void;
+  moveAnchor: (id: string, index: number, local: Vec3) => void;
+  moveHandle: (id: string, index: number, which: "hin" | "hout", offset: Vec3, shift?: boolean) => void;
+  convertAnchorAt: (id: string, index: number) => void;
+  mergeSelected: () => void;
+  cropSelected: () => void;
   applyBand: () => void;
   commit: () => void;
   undo: () => void;
@@ -152,6 +166,8 @@ export const useForge = create<ForgeState>((set, get) => {
   const initial = boot();
   return {
     ...initial,
+    selectedIds: initial.selectedId ? [initial.selectedId] : [],
+    tool: "v",
     mode: "translate",
     snap: 0.005,
     showGrid: true,
@@ -185,9 +201,11 @@ export const useForge = create<ForgeState>((set, get) => {
         : defaultSeedFor(slot);
       const solids = buildSeed(seed, quad, letter);
       get().commit();
+      const sid = pickSelected(solids);
       set({
         solids,
-        selectedId: pickSelected(solids),
+        selectedId: sid,
+        selectedIds: sid ? [sid] : [],
         name: `${SLOT_BY_ID[slot]?.label ?? slot} · ${seed.label}`,
         future: [],
       });
@@ -211,13 +229,29 @@ export const useForge = create<ForgeState>((set, get) => {
       set({ name: n });
       persist(get);
     },
-    setMode: (m) => set({ mode: m }),
+    setMode: (m) => set({ mode: m, tool: "v" }),
+    setTool: (t) => set({ tool: t }),
     setSnap: (n) => set({ snap: n }),
     toggle: (k) => set((s) => ({ [k]: !s[k] })),
     setTheme: (t) => set({ theme: t }),
     setMobilePanel: (p) => set({ mobilePanel: p }),
     setDragging: (d) => set({ dragging: d }),
-    select: (id) => set({ selectedId: id }),
+    select: (id, additive = false) => {
+      if (!id) {
+        set({ selectedId: null, selectedIds: [] });
+        return;
+      }
+      if (!additive) {
+        set({ selectedId: id, selectedIds: [id] });
+        return;
+      }
+      const cur = get().selectedIds;
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      set({
+        selectedIds: next,
+        selectedId: next.includes(id) ? id : next[next.length - 1] ?? null,
+      });
+    },
     addSolid: (t) => {
       get().commit();
       const slot = get().slot;
@@ -246,38 +280,44 @@ export const useForge = create<ForgeState>((set, get) => {
       set((st) => ({
         solids: [...st.solids, solid],
         selectedId: solid.id,
+        selectedIds: [solid.id],
         future: [],
       }));
       persist(get);
     },
     removeSelected: () => {
-      const { selectedId, solids } = get();
-      if (!selectedId) return;
-      const cur = solids.find((s) => s.id === selectedId);
-      if (cur?.locked) return;
+      const { selectedIds, solids } = get();
+      if (!selectedIds.length) return;
+      if (solids.filter((s) => selectedIds.includes(s.id)).every((s) => s.locked)) return;
       get().commit();
-      const next = solids.filter((s) => s.id !== selectedId);
+      const drop = new Set(selectedIds.filter((id) => !solids.find((s) => s.id === id)?.locked));
+      const next = solids.filter((s) => !drop.has(s.id));
+      const keep = next[next.length - 1]?.id ?? null;
       set({
         solids: next,
-        selectedId: next[next.length - 1]?.id ?? null,
+        selectedId: keep,
+        selectedIds: keep ? [keep] : [],
         future: [],
       });
       persist(get);
     },
     duplicateSelected: () => {
-      const cur = get().selected();
-      if (!cur) return;
+      const { selectedIds, solids } = get();
+      const picks = solids.filter((s) => selectedIds.includes(s.id));
+      if (!picks.length) return;
       get().commit();
       const sc = defaultScaleFor(get().slot);
-      const copy: Solid = {
+      const copies = picks.map((cur) => ({
         ...cloneSolids([cur])[0]!,
         id: uid(),
         name: cur.name + " copy",
-        p: [cur.p[0] + 0.03 / sc.sx, cur.p[1], cur.p[2]],
-      };
+        p: [cur.p[0] + 0.03 / sc.sx, cur.p[1], cur.p[2]] as Solid["p"],
+      }));
+      const ids = copies.map((c) => c.id);
       set((st) => ({
-        solids: [...st.solids, copy],
-        selectedId: copy.id,
+        solids: [...st.solids, ...copies],
+        selectedId: ids[ids.length - 1] ?? null,
+        selectedIds: ids,
         future: [],
       }));
       persist(get);
@@ -294,6 +334,85 @@ export const useForge = create<ForgeState>((set, get) => {
       if (record) get().commit();
       set({ solids, future: record ? [] : get().future });
       persist(get);
+    },
+    addAnchor: (id, local) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur || cur.locked) return;
+      get().commit();
+      const anchors = [
+        ...normalizeAnchors(cur.anchors),
+        { p: local, kind: "corner" as const, hin: [0, 0, 0] as Vec3, hout: [0, 0, 0] as Vec3 },
+      ];
+      get().updateSolid(id, { anchors });
+    },
+    removeAnchor: (id, index) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur?.anchors || cur.locked) return;
+      get().commit();
+      get().updateSolid(id, { anchors: normalizeAnchors(cur.anchors).filter((_, i) => i !== index) });
+    },
+    moveAnchor: (id, index, local) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur?.anchors || cur.locked) return;
+      const anchors = normalizeAnchors(cur.anchors).map((a, i) => (i === index ? { ...a, p: local } : a));
+      get().updateSolid(id, { anchors });
+    },
+    moveHandle: (id, index, which, offset, shift = false) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur?.anchors || cur.locked) return;
+      const off = shift ? snap45(offset) : offset;
+      const anchors = normalizeAnchors(cur.anchors).map((a, i) => {
+        if (i !== index) return a;
+        if (a.kind !== "smooth") return a;
+        if (which === "hout") return { ...a, hout: off, hin: [-off[0], -off[1], -off[2]] as Vec3 };
+        return { ...a, hin: off, hout: [-off[0], -off[1], -off[2]] as Vec3 };
+      });
+      get().updateSolid(id, { anchors });
+    },
+    convertAnchorAt: (id, index) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur?.anchors || cur.locked) return;
+      get().commit();
+      get().updateSolid(id, { anchors: convertAnchor(normalizeAnchors(cur.anchors), index) });
+    },
+    mergeSelected: () => {
+      const { selectedIds, solids, quad } = get();
+      const picks = solids.filter((s) => selectedIds.includes(s.id) && s.visible);
+      if (picks.length < 2) {
+        get().flash("Select two or more solids");
+        return;
+      }
+      const baked = uniteSolids(picks, quad);
+      if (!baked) {
+        get().flash("Merge failed");
+        return;
+      }
+      get().commit();
+      const drop = new Set(picks.map((s) => s.id));
+      const next = [...solids.filter((s) => !drop.has(s.id)), baked];
+      set({ solids: next, selectedId: baked.id, selectedIds: [baked.id], future: [] });
+      persist(get);
+      get().flash("Merged");
+    },
+    cropSelected: () => {
+      const { selectedId, selectedIds, solids, quad } = get();
+      const keep = solids.find((s) => s.id === selectedId);
+      const cuts = solids.filter((s) => selectedIds.includes(s.id) && s.id !== selectedId);
+      if (!keep || !cuts.length) {
+        get().flash("Select target, then cutters");
+        return;
+      }
+      const baked = subtractSolids(keep, cuts, quad);
+      if (!baked) {
+        get().flash("Crop failed");
+        return;
+      }
+      get().commit();
+      const drop = new Set([keep.id, ...cuts.map((s) => s.id)]);
+      const next = [...solids.filter((s) => !drop.has(s.id)), baked];
+      set({ solids: next, selectedId: baked.id, selectedIds: [baked.id], future: [] });
+      persist(get);
+      get().flash("Cropped");
     },
     applyBand: () => {
       const { quad, letter, solids } = get();
@@ -366,11 +485,13 @@ export const useForge = create<ForgeState>((set, get) => {
       get().commit();
       const solids = cloneSolids(ensureHangarLocal(item.slot, item.solids, item.space));
       const kitMatch = /^(SS|SR|RS|RR)([A-Z])-/.exec(item.kit);
+      const sid = pickSelected(solids);
       set({
         name: item.name,
         slot: item.slot,
         solids,
-        selectedId: pickSelected(solids),
+        selectedId: sid,
+        selectedIds: sid ? [sid] : [],
         quad: item.quad ?? (kitMatch ? (kitMatch[1] as Quad) : get().quad),
         letter: item.letter ?? kitMatch?.[2] ?? get().letter,
         mobilePanel: get().mobilePanel === "library" ? "library" : null,
@@ -497,6 +618,7 @@ export const useForge = create<ForgeState>((set, get) => {
         letter: file.letter,
         solids,
         selectedId: solids[0]?.id ?? null,
+        selectedIds: solids[0]?.id ? [solids[0].id] : [],
         future: [],
       });
       persist(get);
@@ -531,6 +653,7 @@ export function hydrateForgeFromStorage() {
     letter: saved.letter,
     solids,
     selectedId: saved.selectedId,
+    selectedIds: saved.selectedId ? [saved.selectedId] : [],
     library,
   });
   saveSession({

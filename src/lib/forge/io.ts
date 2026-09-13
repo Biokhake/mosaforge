@@ -135,6 +135,7 @@ export function solidsFromSpecs(specs: Spec[]): Solid[] {
     "torus",
     "hex",
     "prism",
+    "mesh",
   ]);
   return specs.map((sp, i) => {
     const t = (shapes.has(sp.t) ? sp.t : "box") as Shape;
@@ -156,7 +157,7 @@ export function solidsFromSpecs(specs: Spec[]): Solid[] {
 
 export function specsFromSolids(solids: Solid[]): Spec[] {
   return solids
-    .filter((s) => s.visible)
+    .filter((s) => s.visible && s.t !== "mesh")
     .map((s) => {
       const t = s.t === "hex" || s.t === "prism" ? "cyl" : s.t;
       const spec: Spec = {

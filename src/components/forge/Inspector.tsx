@@ -1,4 +1,4 @@
-import { MATS, SHAPES, type Solid } from "@/lib/forge/types";
+import { MATS, SHAPES, opacityOf, type Solid } from "@/lib/forge/types";
 import { useForge } from "@/lib/forge/store";
 import { cn } from "@/lib/utils";
 
@@ -58,9 +58,12 @@ function patchVec(s: Solid, key: "p" | "r" | "s", i: 0 | 1 | 2, v: number): Soli
 
 export function Inspector() {
   const solid = useForge((s) => s.selected());
+  const selectedIds = useForge((s) => s.selectedIds);
   const updateSolid = useForge((s) => s.updateSolid);
   const commit = useForge((s) => s.commit);
   const applyBand = useForge((s) => s.applyBand);
+  const mergeSelected = useForge((s) => s.mergeSelected);
+  const cropSelected = useForge((s) => s.cropSelected);
   const showGrid = useForge((s) => s.showGrid);
   const showGhost = useForge((s) => s.showGhost);
   const showEdges = useForge((s) => s.showEdges);
@@ -124,6 +127,52 @@ export function Inspector() {
             {m.label}
           </button>
         ))}
+      </div>
+
+      <label className="mt-3 grid grid-cols-[52px_1fr_40px] items-center gap-2">
+        <span className="font-mono text-2xs text-muted">Opacity</span>
+        <input
+          type="range"
+          min={0.05}
+          max={1}
+          step={0.01}
+          value={opacityOf(solid)}
+          onChange={(e) => updateSolid(solid.id, { o: Number(e.target.value) })}
+          onPointerUp={commit}
+        />
+        <span className="text-right font-mono text-2xs text-subtle">
+          {Math.round(opacityOf(solid) * 100)}
+        </span>
+      </label>
+
+      <div className="mt-3 font-mono text-2xs uppercase tracking-wider text-subtle">Pathfinder</div>
+      <div className="mt-1 grid grid-cols-2 gap-1">
+        <button
+          type="button"
+          onClick={() => updateSolid(solid.id, { op: solid.op === "sub" ? "add" : "sub" })}
+          className={cn(
+            "rounded-sm py-1.5 font-mono text-2xs",
+            solid.op === "sub" ? "bg-signal text-signal-fg" : "bg-surface text-muted",
+          )}
+        >
+          {solid.op === "sub" ? "Cutter −" : "Stack +"}
+        </button>
+        <button
+          type="button"
+          onClick={mergeSelected}
+          disabled={selectedIds.length < 2}
+          className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg disabled:opacity-30"
+        >
+          Merge ∪
+        </button>
+        <button
+          type="button"
+          onClick={cropSelected}
+          disabled={selectedIds.length < 2}
+          className="col-span-2 rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg disabled:opacity-30"
+        >
+          Crop {selectedIds.length > 1 ? `(keep ${solid.name})` : ""}
+        </button>
       </div>
 
       <div className="mt-4 space-y-4">

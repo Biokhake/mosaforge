@@ -14,7 +14,8 @@ export type Shape =
   | "octa"
   | "torus"
   | "hex"
-  | "prism";
+  | "prism"
+  | "mesh";
 
 export type MatKey =
   | "prim"
@@ -39,6 +40,25 @@ export type GroupId =
   | "weapon"
   | "extra";
 
+export type BoolOp = "add" | "sub";
+
+export type EditTool = "v" | "a" | "plus" | "minus" | "c" | "shiftc";
+
+export type AnchorKind = "corner" | "smooth";
+
+export interface Anchor {
+  p: Vec3;
+  kind: AnchorKind;
+  hin: Vec3;
+  hout: Vec3;
+}
+
+export interface MeshData {
+  pos: number[];
+  nrm?: number[];
+  idx?: number[];
+}
+
 export interface Solid {
   id: string;
   name: string;
@@ -51,6 +71,10 @@ export interface Solid {
   n?: number;
   visible: boolean;
   locked: boolean;
+  o?: number;
+  op?: BoolOp;
+  anchors?: Anchor[];
+  mesh?: MeshData;
 }
 
 export interface SlotDef {
@@ -140,6 +164,30 @@ export function cloneSolids(solids: Solid[]): Solid[] {
     p: [...s.p] as Vec3,
     r: [...s.r] as Vec3,
     s: [...s.s] as Vec3,
+    anchors: s.anchors
+      ? (s.anchors as unknown as (Anchor | Vec3)[]).map((a) =>
+          Array.isArray(a)
+            ? {
+                p: [a[0], a[1], a[2]] as Vec3,
+                kind: "corner" as const,
+                hin: [0, 0, 0] as Vec3,
+                hout: [0, 0, 0] as Vec3,
+              }
+            : {
+                p: [...a.p] as Vec3,
+                kind: a.kind,
+                hin: [...a.hin] as Vec3,
+                hout: [...a.hout] as Vec3,
+              },
+        )
+      : undefined,
+    mesh: s.mesh
+      ? {
+          pos: [...s.mesh.pos],
+          nrm: s.mesh.nrm ? [...s.mesh.nrm] : undefined,
+          idx: s.mesh.idx ? [...s.mesh.idx] : undefined,
+        }
+      : undefined,
   }));
 }
 
@@ -172,6 +220,12 @@ export function defaultSize(t: Shape): { s: Vec3; d?: number } {
     default:
       return { s: [0.1, 0.1, 0.1] };
   }
+}
+
+export function opacityOf(s: Solid): number {
+  const o = s.o;
+  if (o == null || Number.isNaN(o)) return 1;
+  return Math.min(1, Math.max(0.05, o));
 }
 
 export interface Spec {

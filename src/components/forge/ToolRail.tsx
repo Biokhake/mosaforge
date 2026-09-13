@@ -1,0 +1,64 @@
+import { Crop, Minus, MousePointer2, PenTool, Plus, Scissors, Spline } from "lucide-react";
+import { useForge } from "@/lib/forge/store";
+import type { EditTool } from "@/lib/forge/types";
+import { cn } from "@/lib/utils";
+
+const TOOLS: { id: EditTool; key: string; label: string; icon: typeof MousePointer2 }[] = [
+  { id: "v", key: "V", label: "Select", icon: MousePointer2 },
+  { id: "a", key: "A", label: "Anchors", icon: Spline },
+  { id: "plus", key: "+", label: "Add anchor", icon: Plus },
+  { id: "minus", key: "−", label: "Delete anchor", icon: Minus },
+  { id: "shiftc", key: "⇧C", label: "Convert anchor", icon: PenTool },
+  { id: "c", key: "C", label: "Crop", icon: Scissors },
+];
+
+export function ToolRail() {
+  const tool = useForge((s) => s.tool);
+  const setTool = useForge((s) => s.setTool);
+  const mergeSelected = useForge((s) => s.mergeSelected);
+  const cropSelected = useForge((s) => s.cropSelected);
+  const selectedIds = useForge((s) => s.selectedIds);
+  const n = selectedIds.length;
+
+  return (
+    <div className="pointer-events-auto flex flex-col gap-0.5 rounded-md border border-border bg-elevated/95 p-1 shadow-sm">
+      {TOOLS.map((t) => {
+        const Icon = t.icon;
+        const on = tool === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            title={`${t.label} (${t.key})`}
+            onClick={() => setTool(t.id)}
+            className={cn(
+              "flex size-8 items-center justify-center rounded-sm",
+              on ? "bg-primary text-primary-foreground" : "text-muted hover:bg-surface hover:text-fg",
+            )}
+          >
+            <Icon className="size-3.5" />
+          </button>
+        );
+      })}
+      <div className="my-0.5 h-px bg-border" />
+      <button
+        type="button"
+        title="Merge selected"
+        disabled={n < 2}
+        onClick={mergeSelected}
+        className="flex size-8 items-center justify-center rounded-sm text-muted hover:bg-surface hover:text-fg disabled:opacity-30"
+      >
+        <span className="font-mono text-2xs">∪</span>
+      </button>
+      <button
+        type="button"
+        title="Crop — keep first, cut the rest"
+        disabled={n < 2}
+        onClick={cropSelected}
+        className="flex size-8 items-center justify-center rounded-sm text-muted hover:bg-surface hover:text-fg disabled:opacity-30"
+      >
+        <Crop className="size-3.5" />
+      </button>
+    </div>
+  );
+}

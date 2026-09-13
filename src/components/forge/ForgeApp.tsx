@@ -4,6 +4,7 @@ import { ForgeCanvas } from "./ForgeCanvas";
 import { Inspector } from "./Inspector";
 import { LibraryPanel } from "./LibraryPanel";
 import { SolidList } from "./SolidList";
+import { ToolRail } from "./ToolRail";
 import { TopBar } from "./TopBar";
 import { Button } from "@/components/ui/button";
 import { hydrateForgeFromStorage, useForge } from "@/lib/forge/store";
@@ -42,13 +43,17 @@ export function ForgeApp() {
   const mobilePanel = useForge((s) => s.mobilePanel);
   const setMobilePanel = useForge((s) => s.setMobilePanel);
   const setMode = useForge((s) => s.setMode);
+  const setTool = useForge((s) => s.setTool);
   const undo = useForge((s) => s.undo);
   const redo = useForge((s) => s.redo);
   const duplicateSelected = useForge((s) => s.duplicateSelected);
   const removeSelected = useForge((s) => s.removeSelected);
+  const cropSelected = useForge((s) => s.cropSelected);
+  const mergeSelected = useForge((s) => s.mergeSelected);
   const toast = useForge((s) => s.toast);
   const solids = useForge((s) => s.solids);
   const slot = useForge((s) => s.slot);
+  const tool = useForge((s) => s.tool);
 
   useEffect(() => {
     hydrateForgeFromStorage();
@@ -59,31 +64,63 @@ export function ForgeApp() {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      const k = e.key;
+      if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
+      if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === "d") {
         e.preventDefault();
         duplicateSelected();
         return;
       }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      if (k === "Delete" || k === "Backspace") {
         e.preventDefault();
         removeSelected();
         return;
       }
-      if (e.key === "g" || e.key === "G" || e.key === "1") setMode("translate");
-      if (e.key === "r" || e.key === "R" || e.key === "2") setMode("rotate");
-      if (e.key === "s" || e.key === "S" || e.key === "3") {
-        if (!e.metaKey && !e.ctrlKey) setMode("scale");
+      if (e.metaKey || e.ctrlKey) return;
+      if (k === "v" || k === "V") {
+        setTool("v");
+        return;
       }
+      if (k === "a" || k === "A") {
+        setTool("a");
+        return;
+      }
+      if (k === "+" || k === "=") {
+        e.preventDefault();
+        setTool("plus");
+        return;
+      }
+      if (k === "-" || k === "_") {
+        e.preventDefault();
+        setTool("minus");
+        return;
+      }
+      if (k === "c" || k === "C") {
+        if (e.shiftKey) {
+          e.preventDefault();
+          setTool("shiftc");
+          return;
+        }
+        setTool("c");
+        if (useForge.getState().selectedIds.length >= 2) cropSelected();
+        return;
+      }
+      if (k === "u" || k === "U") {
+        mergeSelected();
+        return;
+      }
+      if (k === "g" || k === "G" || k === "1") setMode("translate");
+      if (k === "r" || k === "R" || k === "2") setMode("rotate");
+      if (k === "s" || k === "S" || k === "3") setMode("scale");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, duplicateSelected, removeSelected, setMode]);
+  }, [undo, redo, duplicateSelected, removeSelected, setMode, setTool, cropSelected, mergeSelected]);
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-bg text-fg">
@@ -95,8 +132,13 @@ export function ForgeApp() {
 
         <main className="relative min-w-0 flex-1">
           <Viewport captureRef={captureRef} />
-          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md bg-elevated/80 px-2 py-1 font-mono text-2xs text-muted">
-            {slot} · {solids.length} {solids.length === 1 ? "solid" : "solids"} · drag orbit · G R S
+          <div className="pointer-events-none absolute inset-0 z-10">
+            <div className="pointer-events-auto absolute left-3 top-3">
+              <ToolRail />
+            </div>
+            <div className="absolute left-14 top-3 rounded-md bg-elevated/80 px-2 py-1 font-mono text-2xs text-muted">
+              {slot} · {solids.length} · {tool === "shiftc" ? "⇧C" : tool.toUpperCase()} · 선택=편집 · 빈곳=궤도
+            </div>
           </div>
           {toast ? (
             <div className="forge-toast pointer-events-none absolute bottom-16 left-1/2 z-10 -translate-x-1/2 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground md:bottom-4">
