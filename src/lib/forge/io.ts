@@ -5,12 +5,14 @@ import {
   type ForgePartFile,
   type LibraryItem,
   type Quad,
+  type Shape,
   type Solid,
   type Spec,
+  type Vec3,
 } from "./types";
 
 const LIB_KEY = "mosa-forge-library";
-const SESSION_KEY = "mosa-forge-session-v2";
+const SESSION_KEY = "mosa-forge-session-v3";
 
 export interface SessionState {
   name: string;
@@ -117,6 +119,39 @@ export function downloadPng(filename: string, canvas: HTMLCanvasElement) {
     a.click();
     URL.revokeObjectURL(url);
   }, "image/png");
+}
+
+export function solidsFromSpecs(specs: Spec[]): Solid[] {
+  const shapes = new Set([
+    "box",
+    "cyl",
+    "sph",
+    "cone",
+    "capsule",
+    "wedge",
+    "trap",
+    "cowl",
+    "octa",
+    "torus",
+    "hex",
+    "prism",
+  ]);
+  return specs.map((sp, i) => {
+    const t = (shapes.has(sp.t) ? sp.t : "box") as Shape;
+    return {
+      id: `s${i}-${sp.t}`,
+      name: `${sp.t}-${i + 1}`,
+      t,
+      m: sp.m,
+      s: [...sp.s] as Vec3,
+      p: [...sp.p] as Vec3,
+      r: sp.r ? ([...sp.r] as Vec3) : [0, 0, 0],
+      n: sp.n,
+      d: sp.d,
+      visible: true,
+      locked: false,
+    };
+  });
 }
 
 export function specsFromSolids(solids: Solid[]): Spec[] {

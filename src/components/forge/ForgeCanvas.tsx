@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { geometryFor } from "@/lib/forge/geometry";
 import { getLineMat, getPalette } from "@/lib/forge/palette";
 import { defaultScaleFor } from "@/lib/forge/scale";
+import { slotTargetWorld } from "@/lib/forge/fit";
 import { GHOST_BOXES, SLOT_BY_ID } from "@/lib/forge/slots";
 import type { Solid } from "@/lib/forge/types";
 import { useForge } from "@/lib/forge/store";
@@ -135,6 +136,7 @@ function Ghost() {
   const slot = useForge((s) => s.slot);
   const def = SLOT_BY_ID[slot];
   const socket = def?.socket ?? ([0, 0, 0] as const);
+  const cell = slotTargetWorld(slot);
   return (
     <group position={[-socket[0], -socket[1], -socket[2]]}>
       {GHOST_BOXES.map((b) => (
@@ -148,6 +150,12 @@ function Ghost() {
           />
         </mesh>
       ))}
+      {cell ? (
+        <mesh position={cell.p} raycast={() => {}}>
+          <boxGeometry args={cell.s} />
+          <meshBasicMaterial color="#c4a35a" wireframe transparent opacity={0.45} />
+        </mesh>
+      ) : null}
     </group>
   );
 }

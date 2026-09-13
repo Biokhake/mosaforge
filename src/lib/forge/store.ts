@@ -34,10 +34,12 @@ import {
   clearPackExtras,
   deleteStoredPack,
   downloadZip,
+  kitsToZip,
   loadBuiltinPack,
   loadPackExtras,
   loadStoredPacks,
   makePack,
+  normalizePartFile,
   packToZip,
   putStoredPack,
 } from "./pack";
@@ -120,6 +122,7 @@ export interface ForgeState {
   exportPack: (id: string) => void;
   loadPackFor: (slot: string, kit?: string) => boolean;
   exportHangarKit: (kit?: string) => void;
+  exportAllHangarKits: () => void;
   exportJson: () => ReturnType<typeof toPartFile>;
   importJson: (raw: unknown) => boolean;
   flash: (msg: string) => void;
@@ -404,12 +407,13 @@ export const useForge = create<ForgeState>((set, get) => {
         get().flash("Kit pack failed to load");
       }
     },
-    registerPack: async (name, files) => {
-      if (!files.length) {
+    registerPack: async (name, incoming) => {
+      if (!incoming.length) {
         get().flash("No MOSA Forge parts in file");
         return 0;
       }
       set({ packBusy: true });
+      const files = incoming.map(normalizePartFile);
       const packs = [...get().packs];
       const existing = packs.find((p) => !p.builtin && p.name === name);
       const pack = existing
@@ -456,6 +460,16 @@ export const useForge = create<ForgeState>((set, get) => {
       const n = Object.keys(save.forgeParts).length;
       downloadJson(`${id.toLowerCase()}-mosa.json`, save);
       get().flash(`${id} → MOSA · ${n} forged slots`);
+    },
+    exportAllHangarKits: () => {
+      const catalog = get().catalog;
+      const kits = new Set(catalog.map((x) => x.kit)).size;
+      if (!kits) {
+        get().flash("No kits in catalog");
+        return;
+      }
+      downloadZip("mosa-kits.zip", kitsToZip(catalog));
+      get().flash(`${kits} kit JSON → MOSA`);
     },
     exportJson: () => {
       const s = get();

@@ -24,6 +24,7 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
   const exportPack = useForge((s) => s.exportPack);
   const loadPackFor = useForge((s) => s.loadPackFor);
   const exportHangarKit = useForge((s) => s.exportHangarKit);
+  const exportAllHangarKits = useForge((s) => s.exportAllHangarKits);
   const flash = useForge((s) => s.flash);
 
   const [tab, setTab] = useState<"pack" | "mine">("pack");
@@ -160,9 +161,18 @@ export function LibraryPanel({ onClose }: { onClose: () => void }) {
               size="sm"
               className="w-full"
               onClick={() => exportHangarKit(kitFilter ?? kit)}
-              title="Hangar save JSON for mosa.grok.me Import"
+              title="One hangar JSON — all slots of this kit"
             >
-              Export {kitFilter ?? kit} → MOSA
+              Export {kitFilter ?? kit} kit JSON
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => exportAllHangarKits()}
+              title="Zip of one JSON per kit, all parts inside"
+            >
+              Export all kits zip
             </Button>
             <Button
               variant="outline"
