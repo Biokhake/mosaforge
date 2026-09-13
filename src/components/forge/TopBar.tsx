@@ -13,7 +13,8 @@ import {
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { downloadJson, parsePartFile } from "@/lib/forge/io";
+import { downloadJson } from "@/lib/forge/io";
+import { ingestFiles } from "@/lib/forge/pack";
 import { lettersFor, QUADS } from "@/lib/forge/types";
 import { GROUPS, SLOTS } from "@/lib/forge/slots";
 import { useForge } from "@/lib/forge/store";
@@ -39,6 +40,10 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
   const canRedo = useForge((s) => s.future.length > 0);
   const exportJson = useForge((s) => s.exportJson);
   const importJson = useForge((s) => s.importJson);
+  const importParts = useForge((s) => s.importParts);
+  const loadPackFor = useForge((s) => s.loadPackFor);
+  const packReady = useForge((s) => s.packReady);
+  const catalog = useForge((s) => s.catalog);
   const saveToLibrary = useForge((s) => s.saveToLibrary);
   const setTheme = useForge((s) => s.setTheme);
   const setMobilePanel = useForge((s) => s.setMobilePanel);
@@ -112,7 +117,15 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
           ))}
         </select>
 
-        <span className="hidden font-mono text-2xs text-subtle lg:inline">{kit}</span>
+        <button
+          type="button"
+          onClick={() => loadPackFor(slot, kit)}
+          disabled={!packReady || !catalog.some((x) => x.slot === slot && x.kit === kit)}
+          title="Load pack part for this slot + kit"
+          className="hidden font-mono text-2xs text-subtle hover:text-fg disabled:opacity-40 lg:inline"
+        >
+          {kit}
+        </button>
 
         <span className="hidden h-4 w-px bg-border sm:block" />
 
@@ -170,7 +183,7 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
           variant="ghost"
           size="iconSm"
           onClick={() => fileRef.current?.click()}
-          title="Import JSON"
+          title="Import JSON or zip pack"
         >
           <FolderOpen className="size-4" />
         </Button>
@@ -193,22 +206,24 @@ export function TopBar({ onSnap }: { onSnap: () => void }) {
         <input
           ref={fileRef}
           type="file"
-          accept="application/json"
+          accept=".json,.zip,application/json,application/zip"
+          multiple
           className="hidden"
           onChange={async (e) => {
-            const file = e.target.files?.[0];
+            const list = [...(e.target.files ?? [])];
             e.target.value = "";
-            if (!file) return;
-            try {
-              const raw: unknown = JSON.parse(await file.text());
-              if (!parsePartFile(raw)) {
-                useForge.getState().flash("Not a MOSA Forge file");
-                return;
-              }
-              importJson(raw);
-            } catch {
-              useForge.getState().flash("Invalid JSON");
+            if (!list.length) return;
+            const parts = await ingestFiles(list);
+            if (!parts.length) {
+              useForge.getState().flash("No MOSA Forge parts in file");
+              return;
             }
+            if (parts.length === 1) {
+              importJson(parts[0]);
+              return;
+            }
+            importParts(parts);
+            setMobilePanel("library");
           }}
         />
       </div>

@@ -204,6 +204,9 @@ export interface LibraryItem {
   name: string;
   slot: string;
   kit: string;
+  quad?: Quad;
+  letter?: string;
   solids: Solid[];
   updatedAt: number;
+  builtin?: boolean;
 }

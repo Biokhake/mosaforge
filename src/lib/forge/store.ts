@@ -24,6 +24,12 @@ import {
   type SessionState,
 } from "./io";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
+import {
+  loadPackExtras,
+  mergeParts,
+  savePackExtras,
+} from "./pack";
+import type { ForgePartFile } from "./types";
 
 const HISTORY_CAP = 60;
 
@@ -59,6 +65,8 @@ export interface ForgeState {
   theme: "dark" | "light";
   mobilePanel: null | "solids" | "inspect" | "library";
   library: LibraryItem[];
+  catalog: LibraryItem[];
+  packReady: boolean;
   past: Solid[][];
   future: Solid[][];
   dragging: boolean;
@@ -91,6 +99,9 @@ export interface ForgeState {
   saveToLibrary: () => void;
   loadLibraryItem: (id: string) => void;
   deleteLibraryItem: (id: string) => void;
+  setCatalog: (files: ForgePartFile[], builtin?: boolean) => void;
+  importParts: (files: ForgePartFile[]) => number;
+  loadPackFor: (slot: string, kit?: string) => boolean;
   exportJson: () => ReturnType<typeof toPartFile>;
   importJson: (raw: unknown) => boolean;
   flash: (msg: string) => void;
@@ -129,6 +140,8 @@ export const useForge = create<ForgeState>((set, get) => {
     theme: "dark",
     mobilePanel: null,
     past: [],
+    catalog: [],
+    packReady: false,
     future: [],
     dragging: false,
     toast: null,
@@ -300,30 +313,36 @@ export const useForge = create<ForgeState>((set, get) => {
       get().seed();
     },
     saveToLibrary: () => {
-      const { name, slot, solids, library } = get();
+      const { name, slot, quad, letter, solids, library } = get();
       const item: LibraryItem = {
         id: uid("lib"),
         name,
         slot,
         kit: get().kit(),
+        quad,
+        letter,
         solids: cloneSolids(solids),
         updatedAt: Date.now(),
       };
-      const next = [item, ...library].slice(0, 40);
+      const next = [item, ...library].slice(0, 80);
       saveLibrary(next);
       set({ library: next });
       get().flash("Saved to library");
     },
     loadLibraryItem: (id) => {
-      const item = get().library.find((x) => x.id === id);
+      const item =
+        get().catalog.find((x) => x.id === id) ?? get().library.find((x) => x.id === id);
       if (!item) return;
       get().commit();
+      const kitMatch = /^(SS|SR|RS|RR)([A-Z])-/.exec(item.kit);
       set({
         name: item.name,
         slot: item.slot,
         solids: cloneSolids(item.solids),
-        selectedId: item.solids[0]?.id ?? null,
-        mobilePanel: null,
+        selectedId: pickSelected(item.solids),
+        quad: item.quad ?? (kitMatch ? (kitMatch[1] as Quad) : get().quad),
+        letter: item.letter ?? kitMatch?.[2] ?? get().letter,
+        mobilePanel: get().mobilePanel === "library" ? "library" : null,
         future: [],
       });
       persist(get);
@@ -332,6 +351,43 @@ export const useForge = create<ForgeState>((set, get) => {
       const next = get().library.filter((x) => x.id !== id);
       saveLibrary(next);
       set({ library: next });
+    },
+    setCatalog: (files, builtin = true) => {
+      const extras = builtin ? loadPackExtras() : [];
+      const base = mergeParts([], files, builtin);
+      set({ catalog: mergeParts(base, extras, false), packReady: true });
+    },
+    importParts: (files) => {
+      if (!files.length) {
+        get().flash("No MOSA Forge parts in file");
+        return 0;
+      }
+      const catalog = mergeParts(get().catalog, files, false);
+      const extras = catalog.filter((x) => !x.builtin).map((x) => ({
+        kind: "mosa-forge-part" as const,
+        version: 1,
+        name: x.name,
+        slot: x.slot,
+        kit: x.kit,
+        quad: x.quad ?? get().quad,
+        letter: x.letter ?? get().letter,
+        solids: x.solids,
+      }));
+      savePackExtras(extras);
+      set({ catalog, packReady: true });
+      get().flash(`Imported ${files.length} parts`);
+      return files.length;
+    },
+    loadPackFor: (slot, kit) => {
+      const want = kit ?? get().kit();
+      const item = get().catalog.find((x) => x.slot === slot && x.kit === want);
+      if (!item) {
+        get().flash(`No pack part for ${slot} · ${want}`);
+        return false;
+      }
+      get().loadLibraryItem(item.id);
+      get().flash(`Loaded ${item.name}`);
+      return true;
     },
     exportJson: () => {
       const s = get();
