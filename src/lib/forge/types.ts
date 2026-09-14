@@ -73,6 +73,7 @@ export interface Solid {
   locked: boolean;
   o?: number;
   op?: BoolOp;
+  b?: number;
   anchors?: Anchor[];
   loops?: number[][];
   path?: boolean;

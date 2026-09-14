@@ -22,6 +22,7 @@ export interface SessionState {
   solids: Solid[];
   selectedId: string | null;
   space?: "hangar" | "visual";
+  kitDraft?: Record<string, { name: string; solids: Solid[] }>;
 }
 
 export function loadSession(): SessionState | null {

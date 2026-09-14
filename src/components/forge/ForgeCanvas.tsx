@@ -19,6 +19,7 @@ import { edgePositions, inferLoops } from "@/lib/forge/cage";
 import { constrainMove, primaryCell, snapMove, snapVec, type GridAxis } from "@/lib/forge/snap";
 import { SmartGrids } from "@/components/forge/SmartGrid";
 import { useForge } from "@/lib/forge/store";
+import { remapSolid } from "@/lib/forge/stamp";
 
 type OrbitHandle = { enabled: boolean; enableRotate: boolean; enablePan: boolean };
 
@@ -437,6 +438,38 @@ function Gizmo() {
   );
 }
 
+function KitOutlines() {
+  const slot = useForge((s) => s.slot);
+  const kitDraft = useForge((s) => s.kitDraft);
+  const stampSlot = useForge((s) => s.stampSlot);
+  const leftTab = useForge((s) => s.leftTab);
+  if (leftTab !== "kit") return null;
+  return (
+    <group>
+      {Object.entries(kitDraft).flatMap(([id, d]) => {
+        if (id === slot || !d.solids.length) return [];
+        const color = id === stampSlot ? "#b42222" : "#79d7ff";
+        return d.solids
+          .filter((s) => s.visible)
+          .map((s) => {
+            const rem = remapSolid(s, id, slot);
+            return (
+              <mesh
+                key={`${id}-${s.id}`}
+                position={rem.p}
+                rotation={rem.r}
+                raycast={() => {}}
+              >
+                <boxGeometry args={[Math.abs(rem.s[0]) || 0.02, Math.abs(rem.s[1]) || 0.02, Math.abs(rem.s[2]) || 0.02]} />
+                <meshBasicMaterial color={color} wireframe transparent opacity={id === stampSlot ? 0.45 : 0.22} />
+              </mesh>
+            );
+          });
+      })}
+    </group>
+  );
+}
+
 function SlotSpace({ children }: { children: ReactNode }) {
   const slot = useForge((s) => s.slot);
   const sc = defaultScaleFor(slot);
@@ -706,6 +739,7 @@ export function ForgeCanvas({
         <Gizmo />
         <SnapGuides />
         <SmartGrids />
+        <KitOutlines />
       </SlotSpace>
       {showGhost ? <Ghost /> : null}
       {showSocket ? <SocketMark /> : null}

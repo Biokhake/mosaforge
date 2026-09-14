@@ -33,7 +33,8 @@ import {
 } from "./io";
 import { hangarSaveForKit } from "./hangar-export";
 import { subtractSolids, uniteSolids } from "./csg";
-import { ensureHangarLocal, migrateItemToHangar, visualSizeToLocal, defaultScaleFor, rehomeSolids } from "./scale";
+import { ensureHangarLocal, migrateItemToHangar, visualSizeToLocal, defaultScaleFor } from "./scale";
+import { STAMP_HINT, stampCut as runStamp, type StampAxis } from "./stamp";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
 import {
   BUILTIN_PACK_ID,
@@ -60,6 +61,10 @@ function pickSelected(solids: Solid[]): string | null {
 
 function persist(get: () => ForgeState) {
   const s = get();
+  const kitDraft = {
+    ...s.kitDraft,
+    [s.slot]: { name: s.name, solids: cloneSolids(s.solids) },
+  };
   saveSession({
     name: s.name,
     slot: s.slot,
@@ -68,8 +73,12 @@ function persist(get: () => ForgeState) {
     solids: s.solids,
     selectedId: s.selectedId,
     space: "hangar",
+    kitDraft,
   });
 }
+
+export type SlotDraft = { name: string; solids: Solid[] };
+export type LeftTab = "kit" | "solids";
 
 export interface ForgeState {
   name: string;
@@ -104,6 +113,10 @@ export interface ForgeState {
   grids: import("./snap").Grids;
   gridDraft: number;
   gridMenu: { x: number; y: number; axis: import("./snap").GridAxis } | null;
+  leftTab: LeftTab;
+  kitDraft: Record<string, SlotDraft>;
+  stampSlot: string | null;
+  stampAxis: StampAxis;
 
   kit: () => string;
   selected: () => Solid | null;
@@ -128,6 +141,13 @@ export interface ForgeState {
   setGridCell: (axis: import("./snap").GridAxis, cell: number) => void;
   setGridMenu: (m: ForgeState["gridMenu"]) => void;
   cycleGrid: () => void;
+  setLeftTab: (t: LeftTab) => void;
+  setStampSlot: (id: string | null) => void;
+  setStampAxis: (a: StampAxis) => void;
+  stampCut: () => void;
+  mirrorSelected: () => void;
+  alignSelected: (axis: 0 | 1 | 2, mode: "min" | "center" | "max") => void;
+  addJointRing: () => void;
   flipSelected: (axis: 0 | 1 | 2) => void;
   ensureAnchors: (id: string) => void;
   select: (id: string | null, additive?: boolean) => void;
@@ -212,6 +232,12 @@ export const useForge = create<ForgeState>((set, get) => {
     grids: defaultGrids(),
     gridDraft: 0.02,
     gridMenu: null,
+    leftTab: "kit",
+    kitDraft: {
+      [initial.slot]: { name: initial.name, solids: cloneSolids(initial.solids) },
+    },
+    stampSlot: STAMP_HINT[initial.slot]?.cutter ?? null,
+    stampAxis: STAMP_HINT[initial.slot]?.axis ?? "x",
 
     kit: () => {
       const { quad, letter } = get();
@@ -242,7 +268,38 @@ export const useForge = create<ForgeState>((set, get) => {
     setSlot: (id) => {
       const prev = get().slot;
       if (prev === id) return;
-      set({ slot: id, solids: rehomeSolids(get().solids, prev, id), mobilePanel: null });
+      const st = get();
+      const kitDraft = {
+        ...st.kitDraft,
+        [prev]: { name: st.name, solids: cloneSolids(st.solids) },
+      };
+      let next = kitDraft[id];
+      if (!next?.solids.length) {
+        const want = st.kit();
+        const item = st.catalog.find((x) => x.slot === id && x.kit === want);
+        if (item) {
+          next = {
+            name: item.name,
+            solids: cloneSolids(ensureHangarLocal(item.slot, item.solids, item.space)),
+          };
+          kitDraft[id] = next;
+        }
+      }
+      const solids = next?.solids?.length ? cloneSolids(next.solids) : [];
+      const sid = pickSelected(solids);
+      const hint = STAMP_HINT[id];
+      set({
+        kitDraft,
+        slot: id,
+        solids,
+        name: next?.name ?? `${SLOT_BY_ID[id]?.label ?? id} · ${st.kit()}`,
+        selectedId: sid,
+        selectedIds: sid ? [sid] : [],
+        stampSlot: hint?.cutter ?? st.stampSlot,
+        stampAxis: hint?.axis ?? st.stampAxis,
+        mobilePanel: null,
+        future: [],
+      });
       persist(get);
     },
     setQuad: (q) => {
@@ -306,6 +363,120 @@ export const useForge = create<ForgeState>((set, get) => {
       else if (exclusive.length === 1 && exclusive[0] === "z") next = off;
       else next = turn("x");
       set({ grids: next, gridMenu: null });
+    },
+    setLeftTab: (t) => set({ leftTab: t }),
+    setStampSlot: (id) => set({ stampSlot: id }),
+    setStampAxis: (a) => set({ stampAxis: a }),
+    stampCut: () => {
+      const st = get();
+      const cutterId = st.stampSlot ?? STAMP_HINT[st.slot]?.cutter ?? null;
+      if (!cutterId || cutterId === st.slot) {
+        get().flash("Pick a cutter slot on Outline");
+        return;
+      }
+      const draft = {
+        ...st.kitDraft,
+        [st.slot]: { name: st.name, solids: cloneSolids(st.solids) },
+      };
+      const cutter = draft[cutterId]?.solids ?? [];
+      if (!cutter.length) {
+        get().flash(`${cutterId} is empty`);
+        return;
+      }
+      const baked = runStamp({
+        target: st.solids,
+        cutter,
+        cutterSlot: cutterId,
+        targetSlot: st.slot,
+        axis: st.stampAxis,
+        quad: st.quad,
+      });
+      if (!baked) {
+        get().flash("Stamp failed");
+        return;
+      }
+      get().commit();
+      const sid = baked[baked.length - 1]?.id ?? null;
+      set({
+        kitDraft: draft,
+        solids: baked,
+        selectedId: sid,
+        selectedIds: sid ? [sid] : [],
+        future: [],
+      });
+      persist(get);
+      get().flash(`Stamped ${cutterId} → ${st.slot}`);
+    },
+    mirrorSelected: () => {
+      const { selectedIds, solids } = get();
+      const picks = solids.filter((s) => selectedIds.includes(s.id));
+      if (!picks.length) return;
+      get().commit();
+      const copies = picks.map((cur) => ({
+        ...cloneSolids([cur])[0]!,
+        id: uid(),
+        name: cur.name + " mir",
+        p: [-cur.p[0], cur.p[1], cur.p[2]] as Vec3,
+        r: [cur.r[0], -cur.r[1], -cur.r[2]] as Vec3,
+      }));
+      const ids = copies.map((c) => c.id);
+      set((st) => ({
+        solids: [...st.solids, ...copies],
+        selectedId: ids[ids.length - 1] ?? null,
+        selectedIds: ids,
+        future: [],
+      }));
+      persist(get);
+      get().flash("Mirrored X");
+    },
+    alignSelected: (axis, mode) => {
+      const { selectedIds, solids } = get();
+      const picks = solids.filter((s) => selectedIds.includes(s.id) && !s.locked);
+      if (picks.length < 2) {
+        get().flash("Select two or more");
+        return;
+      }
+      const key = picks[0]!;
+      const half = (s: Solid) => Math.abs(s.s[axis] || 0) / 2;
+      const min = key.p[axis] - half(key);
+      const max = key.p[axis] + half(key);
+      const mid = key.p[axis];
+      get().commit();
+      set({
+        solids: solids.map((s) => {
+          if (!selectedIds.includes(s.id) || s.id === key.id || s.locked) return s;
+          const h = half(s);
+          const p = [...s.p] as Vec3;
+          if (mode === "min") p[axis] = min + h;
+          else if (mode === "max") p[axis] = max - h;
+          else p[axis] = mid;
+          return { ...s, p };
+        }),
+        future: [],
+      });
+      persist(get);
+    },
+    addJointRing: () => {
+      get().commit();
+      const solid: Solid = {
+        id: uid(),
+        name: "Joint",
+        t: "capsule",
+        m: "joint",
+        s: [0.018, 0.028, 0],
+        p: [0, 0, 0],
+        r: [0, 0, Math.PI / 2],
+        n: 12,
+        visible: true,
+        locked: false,
+      };
+      set((st) => ({
+        solids: [...st.solids, solid],
+        selectedId: solid.id,
+        selectedIds: [solid.id],
+        future: [],
+      }));
+      persist(get);
     },
     flipSelected: (axis) => {
       const { selectedIds, solids } = get();
@@ -739,12 +910,19 @@ export const useForge = create<ForgeState>((set, get) => {
       }
       get().commit();
       const solids = ensureHangarLocal(file.slot, file.solids, file.space);
+      const st = get();
+      const kitDraft = {
+        ...st.kitDraft,
+        [st.slot]: { name: st.name, solids: cloneSolids(st.solids) },
+        [file.slot]: { name: file.name, solids: cloneSolids(solids) },
+      };
       set({
         name: file.name,
         slot: file.slot,
         quad: file.quad,
         letter: file.letter,
         solids,
+        kitDraft,
         selectedId: solids[0]?.id ?? null,
         selectedIds: solids[0]?.id ? [solids[0].id] : [],
         future: [],
@@ -774,6 +952,15 @@ export function hydrateForgeFromStorage() {
     return;
   }
   const solids = ensureHangarLocal(saved.slot, saved.solids, saved.space);
+  const kitDraft = saved.kitDraft
+    ? Object.fromEntries(
+        Object.entries(saved.kitDraft).map(([id, d]) => [
+          id,
+          { name: d.name, solids: ensureHangarLocal(id, d.solids, saved.space) },
+        ]),
+      )
+    : {};
+  kitDraft[saved.slot] = { name: saved.name, solids: cloneSolids(solids) };
   useForge.setState({
     name: saved.name,
     slot: saved.slot,
@@ -782,16 +969,8 @@ export function hydrateForgeFromStorage() {
     solids,
     selectedId: saved.selectedId,
     selectedIds: saved.selectedId ? [saved.selectedId] : [],
+    kitDraft,
     library,
-  });
-  saveSession({
-    name: saved.name,
-    slot: saved.slot,
-    quad: saved.quad,
-    letter: saved.letter,
-    solids,
-    selectedId: saved.selectedId,
-    space: "hangar",
   });
 }
 

@@ -65,6 +65,9 @@ export function Inspector() {
   const mergeSelected = useForge((s) => s.mergeSelected);
   const cropSelected = useForge((s) => s.cropSelected);
   const flipSelected = useForge((s) => s.flipSelected);
+  const mirrorSelected = useForge((s) => s.mirrorSelected);
+  const alignSelected = useForge((s) => s.alignSelected);
+  const addJointRing = useForge((s) => s.addJointRing);
   const showGhost = useForge((s) => s.showGhost);
   const showEdges = useForge((s) => s.showEdges);
   const showSocket = useForge((s) => s.showSocket);
@@ -188,6 +191,64 @@ export function Inspector() {
             className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg"
           >
             Flip {k}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 font-mono text-2xs uppercase tracking-wider text-subtle">Low poly</div>
+      <label className="mt-1 grid grid-cols-[52px_1fr_40px] items-center gap-2">
+        <span className="font-mono text-2xs text-muted">Bevel</span>
+        <input
+          type="range"
+          min={0}
+          max={0.04}
+          step={0.001}
+          value={solid.b ?? 0}
+          onChange={(e) => updateSolid(solid.id, { b: Number(e.target.value) })}
+          onPointerUp={commit}
+        />
+        <span className="text-right font-mono text-2xs text-subtle">{(solid.b ?? 0).toFixed(3)}</span>
+      </label>
+      <div className="mt-1 grid grid-cols-2 gap-1">
+        <button type="button" onClick={mirrorSelected} className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg">
+          Mirror X
+        </button>
+        <button type="button" onClick={addJointRing} className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg">
+          Joint ring
+        </button>
+      </div>
+      <div className="mt-1 grid grid-cols-3 gap-1">
+        {(["min", "center", "max"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            disabled={selectedIds.length < 2}
+            onClick={() => alignSelected(0, mode)}
+            className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg disabled:opacity-30"
+          >
+            X {mode[0]!.toUpperCase()}
+          </button>
+        ))}
+        {(["min", "center", "max"] as const).map((mode) => (
+          <button
+            key={`y${mode}`}
+            type="button"
+            disabled={selectedIds.length < 2}
+            onClick={() => alignSelected(1, mode)}
+            className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg disabled:opacity-30"
+          >
+            Y {mode[0]!.toUpperCase()}
+          </button>
+        ))}
+        {(["min", "center", "max"] as const).map((mode) => (
+          <button
+            key={`z${mode}`}
+            type="button"
+            disabled={selectedIds.length < 2}
+            onClick={() => alignSelected(2, mode)}
+            className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg disabled:opacity-30"
+          >
+            Z {mode[0]!.toUpperCase()}
           </button>
         ))}
       </div>

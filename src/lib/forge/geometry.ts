@@ -184,12 +184,13 @@ export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
   const [a, b, c] = solid.s;
   const n = Math.max(3, Math.round(solid.n ?? (quad === "SS" ? 6 : quad === "SR" ? 12 : 16)));
   switch (solid.t) {
-    case "box":
-      if (quad === "SR") {
-        const rad = Math.min(a, b, c) * 0.08;
-        return new RoundedBoxGeometry(a, b, c, 2, Math.max(0.004, rad));
+    case "box": {
+      const rad = solid.b ?? (quad === "SR" ? Math.min(a, b, c) * 0.08 : 0);
+      if (rad > 0.0008) {
+        return new RoundedBoxGeometry(a, b, c, Math.max(1, Math.min(4, Math.round(solid.n ?? 2))), Math.min(rad, Math.min(a, b, c) * 0.49));
       }
       return new THREE.BoxGeometry(a, b, c);
+    }
     case "cyl":
       return new THREE.CylinderGeometry(a, b || a, c, n);
     case "hex":

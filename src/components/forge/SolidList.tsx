@@ -1,21 +1,17 @@
 import { Copy, Eye, EyeOff, Lock, Plus, Trash2, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MATS, SHAPES, opacityOf } from "@/lib/forge/types";
-import { seedsForSlot } from "@/lib/forge/templates";
 import { useForge } from "@/lib/forge/store";
 import { cn } from "@/lib/utils";
 
 export function SolidList() {
   const solids = useForge((s) => s.solids);
   const selectedIds = useForge((s) => s.selectedIds);
-  const slot = useForge((s) => s.slot);
   const select = useForge((s) => s.select);
   const addSolid = useForge((s) => s.addSolid);
   const removeSelected = useForge((s) => s.removeSelected);
   const duplicateSelected = useForge((s) => s.duplicateSelected);
   const updateSolid = useForge((s) => s.updateSolid);
-  const seed = useForge((s) => s.seed);
-  const seeds = seedsForSlot(slot);
   const selectedSet = new Set(selectedIds);
 
   return (
@@ -34,24 +30,6 @@ export function SolidList() {
               title={`Add ${sh.label}`}
             >
               {sh.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="border-b border-border px-3 py-2">
-        <div className="mb-1.5 font-display text-xs font-semibold uppercase tracking-[0.16em] text-muted">
-          Seed
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {seeds.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => seed(s.id)}
-              className="rounded-sm bg-surface px-1.5 py-1 text-2xs text-fg hover:bg-border"
-            >
-              {s.label}
             </button>
           ))}
         </div>
