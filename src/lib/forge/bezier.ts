@@ -39,10 +39,6 @@ function sub(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 }
 
-function add(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-}
-
 function scale(a: Vec3, k: number): Vec3 {
   return [a[0] * k, a[1] * k, a[2] * k];
 }
@@ -68,9 +64,7 @@ export function convertAnchor(anchors: Anchor[], i: number): Anchor[] {
     if (len(t) < 0.006) t = [0.02, 0, 0];
   }
   return anchors.map((a, k) =>
-    k === i
-      ? { ...a, kind: "smooth" as const, hin: scale(t, -1), hout: t }
-      : a,
+    k === i ? { ...a, kind: "smooth" as const, hin: scale(t, -1), hout: t } : a,
   );
 }
 
@@ -110,6 +104,10 @@ export function snap45(v: Vec3): Vec3 {
   return scale(best, L);
 }
 
+function add(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
 export function cubicPoint(a: Anchor, b: Anchor, t: number): Vec3 {
   const p0 = a.p;
   const p1 = add(a.p, a.hout);
@@ -134,6 +132,21 @@ export function samplePath(anchors: Anchor[], segs = 12): number[] {
     for (let s = 0; s <= segs; s++) {
       const p = cubicPoint(a, b, s / segs);
       pts.push(p[0], p[1], p[2]);
+    }
+  }
+  return pts;
+}
+
+export function profileXY(anchors: Anchor[], segs = 10): { x: number; y: number }[] {
+  const n = anchors.length;
+  if (n < 3) return [];
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = anchors[i]!;
+    const b = anchors[(i + 1) % n]!;
+    for (let s = 0; s < segs; s++) {
+      const p = cubicPoint(a, b, s / segs);
+      pts.push({ x: p[0], y: p[1] });
     }
   }
   return pts;

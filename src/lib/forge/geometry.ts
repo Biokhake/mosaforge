@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import type { Quad, Solid } from "./types";
+import type { Quad, Solid, Vec3 } from "./types";
+import { normalizeAnchors, cubicPoint } from "./bezier";
+import { inferLoops } from "./cage";
 
 function facesToGeo(positions: number[]): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
@@ -63,7 +65,122 @@ export function createCowlGeometry(w: number, h: number, d: number): THREE.Buffe
   ]);
 }
 
+function pushTri(pos: number[], a: Vec3, b: Vec3, c: Vec3) {
+  pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+}
+
+function hexaFrom8(pts: Vec3[]): THREE.BufferGeometry {
+  const p = pts;
+  const pos: number[] = [];
+  const quads: [number, number, number, number][] = [
+    [0, 1, 3, 2],
+    [4, 6, 7, 5],
+    [0, 4, 5, 1],
+    [2, 3, 7, 6],
+    [0, 2, 6, 4],
+    [1, 5, 7, 3],
+  ];
+  for (const [a, b, c, d] of quads) {
+    pushTri(pos, p[a]!, p[b]!, p[c]!);
+    pushTri(pos, p[a]!, p[c]!, p[d]!);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function sampleRing(anchors: ReturnType<typeof normalizeAnchors>, segs: number): Vec3[] {
+  const n = anchors.length;
+  const pts: Vec3[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = anchors[i]!;
+    const b = anchors[(i + 1) % n]!;
+    for (let s = 0; s < segs; s++) {
+      const p = cubicPoint(a, b, s / segs);
+      pts.push([p[0], p[1], p[2]]);
+    }
+  }
+  return pts;
+}
+
+function extrudeRing(ring: Vec3[], depth: number): THREE.BufferGeometry | null {
+  const n = ring.length;
+  if (n < 3) return null;
+  const back: Vec3[] = ring.map((p) => [p[0], p[1], p[2] - depth]);
+  const pos: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    pushTri(pos, ring[i]!, ring[j]!, back[j]!);
+    pushTri(pos, ring[i]!, back[j]!, back[i]!);
+  }
+  const c: Vec3 = [0, 0, 0];
+  const cb: Vec3 = [0, 0, 0];
+  for (const p of ring) {
+    c[0] += p[0];
+    c[1] += p[1];
+    c[2] += p[2];
+  }
+  for (const p of back) {
+    cb[0] += p[0];
+    cb[1] += p[1];
+    cb[2] += p[2];
+  }
+  c[0] /= n;
+  c[1] /= n;
+  c[2] /= n;
+  cb[0] /= n;
+  cb[1] /= n;
+  cb[2] /= n;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    pushTri(pos, c, ring[i]!, ring[j]!);
+    pushTri(pos, cb, back[j]!, back[i]!);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function meshFromLoops(pts: Vec3[], loops: number[][]): THREE.BufferGeometry | null {
+  const pos: number[] = [];
+  for (const loop of loops) {
+    if (loop.length < 3) continue;
+    const v = loop.map((i) => pts[i]).filter(Boolean) as Vec3[];
+    if (v.length < 3) continue;
+    for (let i = 1; i < v.length - 1; i++) pushTri(pos, v[0]!, v[i]!, v[i + 1]!);
+  }
+  if (pos.length < 9) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function pathGeometry(solid: Solid): THREE.BufferGeometry | null {
+  if (!solid.path) return null;
+  const anchors = normalizeAnchors(solid.anchors);
+  if (anchors.length < 3) return null;
+  const loops = inferLoops(anchors, solid.loops);
+  if (loops.length >= 2) {
+    const cage = meshFromLoops(
+      anchors.map((a) => a.p),
+      loops,
+    );
+    if (cage) return cage;
+  }
+  if (anchors.length === 8 && anchors.every((a) => a.kind === "corner")) {
+    return hexaFrom8(anchors.map((a) => a.p));
+  }
+  const depth = Math.max(0.004, Math.abs(solid.s[2] || 0.06));
+  const segs = anchors.some((a) => a.kind === "smooth") ? 8 : 1;
+  return extrudeRing(sampleRing(anchors, segs), depth);
+}
+
 export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
+  const shaped = pathGeometry(solid);
+  if (shaped) return shaped;
   const [a, b, c] = solid.s;
   const n = Math.max(3, Math.round(solid.n ?? (quad === "SS" ? 6 : quad === "SR" ? 12 : 16)));
   switch (solid.t) {

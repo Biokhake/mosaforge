@@ -17,7 +17,10 @@ import {
   type Solid,
   type Vec3,
 } from "./types";
-import { convertAnchor, normalizeAnchors, snap45 } from "./bezier";
+import { handleCorners } from "./csg";
+import { convertAnchor, normalizeAnchors } from "./bezier";
+import { BOX_LOOPS, closestEdge, dropVertex, inferLoops, splitEdge } from "./cage";
+import { defaultGrids } from "./snap";
 import {
   downloadJson,
   loadLibrary,
@@ -93,7 +96,14 @@ export interface ForgeState {
   past: Solid[][];
   future: Solid[][];
   dragging: boolean;
+  space: boolean;
   toast: string | null;
+  smartSnap: boolean;
+  guides: import("./snap").Guide[];
+  contextMenu: { x: number; y: number; id: string } | null;
+  grids: import("./snap").Grids;
+  gridDraft: number;
+  gridMenu: { x: number; y: number; axis: import("./snap").GridAxis } | null;
 
   kit: () => string;
   selected: () => Solid | null;
@@ -109,6 +119,17 @@ export interface ForgeState {
   setTheme: (t: "dark" | "light") => void;
   setMobilePanel: (p: ForgeState["mobilePanel"]) => void;
   setDragging: (d: boolean) => void;
+  setSpace: (v: boolean) => void;
+  setSmartSnap: (v: boolean) => void;
+  setGuides: (g: import("./snap").Guide[]) => void;
+  setContextMenu: (m: ForgeState["contextMenu"]) => void;
+  toggleGrid: (axis: import("./snap").GridAxis) => void;
+  setGridDraft: (n: number) => void;
+  setGridCell: (axis: import("./snap").GridAxis, cell: number) => void;
+  setGridMenu: (m: ForgeState["gridMenu"]) => void;
+  cycleGrid: () => void;
+  flipSelected: (axis: 0 | 1 | 2) => void;
+  ensureAnchors: (id: string) => void;
   select: (id: string | null, additive?: boolean) => void;
   addSolid: (t: Shape) => void;
   removeSelected: () => void;
@@ -118,7 +139,7 @@ export interface ForgeState {
   addAnchor: (id: string, local: Vec3) => void;
   removeAnchor: (id: string, index: number) => void;
   moveAnchor: (id: string, index: number, local: Vec3) => void;
-  moveHandle: (id: string, index: number, which: "hin" | "hout", offset: Vec3, shift?: boolean) => void;
+  moveHandle: (id: string, index: number, which: "hin" | "hout", offset: Vec3) => void;
   convertAnchorAt: (id: string, index: number) => void;
   mergeSelected: () => void;
   cropSelected: () => void;
@@ -183,7 +204,14 @@ export const useForge = create<ForgeState>((set, get) => {
     packBusy: false,
     future: [],
     dragging: false,
+    space: false,
     toast: null,
+    smartSnap: true,
+    guides: [],
+    contextMenu: null,
+    grids: defaultGrids(),
+    gridDraft: 0.02,
+    gridMenu: null,
 
     kit: () => {
       const { quad, letter } = get();
@@ -230,15 +258,95 @@ export const useForge = create<ForgeState>((set, get) => {
       persist(get);
     },
     setMode: (m) => set({ mode: m, tool: "v" }),
-    setTool: (t) => set({ tool: t }),
+    setTool: (t) => {
+      set({ tool: t, contextMenu: null });
+      if (t === "a" || t === "plus" || t === "minus" || t === "shiftc") {
+        const id = get().selectedId;
+        if (id) get().ensureAnchors(id);
+      }
+    },
     setSnap: (n) => set({ snap: n }),
     toggle: (k) => set((s) => ({ [k]: !s[k] })),
     setTheme: (t) => set({ theme: t }),
     setMobilePanel: (p) => set({ mobilePanel: p }),
-    setDragging: (d) => set({ dragging: d }),
+    setDragging: (d) => set({ dragging: d, guides: d ? get().guides : [] }),
+    setSpace: (v) => set({ space: v }),
+    setSmartSnap: (v) => set({ smartSnap: v }),
+    setGuides: (g) => set({ guides: g }),
+    setContextMenu: (m) => set({ contextMenu: m }),
+    toggleGrid: (axis) => {
+      const cur = get().grids[axis];
+      const cell = Math.max(0.002, get().gridDraft);
+      set({
+        grids: { ...get().grids, [axis]: cur.on ? { ...cur, on: false } : { on: true, cell } },
+        gridMenu: null,
+      });
+    },
+    setGridDraft: (n) => set({ gridDraft: Math.max(0.002, n) }),
+    setGridCell: (axis, cell) => {
+      const c = Math.max(0.002, cell);
+      set({
+        grids: { ...get().grids, [axis]: { ...get().grids[axis], cell: c } },
+        gridDraft: c,
+      });
+    },
+    setGridMenu: (m) => set({ gridMenu: m }),
+    cycleGrid: () => {
+      const { grids, gridDraft } = get();
+      const cell = Math.max(0.002, gridDraft);
+      const exclusive = (["x", "y", "z"] as const).filter((a) => grids[a].on);
+      const off = { x: { ...grids.x, on: false }, y: { ...grids.y, on: false }, z: { ...grids.z, on: false } };
+      const turn = (axis: "x" | "y" | "z") => ({
+        ...off,
+        [axis]: { on: true, cell: grids[axis].cell || cell },
+      });
+      let next = off;
+      if (exclusive.length === 1 && exclusive[0] === "x") next = turn("y");
+      else if (exclusive.length === 1 && exclusive[0] === "y") next = turn("z");
+      else if (exclusive.length === 1 && exclusive[0] === "z") next = off;
+      else next = turn("x");
+      set({ grids: next, gridMenu: null });
+    },
+    flipSelected: (axis) => {
+      const { selectedIds, solids } = get();
+      if (!selectedIds.length) return;
+      get().commit();
+      set({
+        solids: solids.map((s) => {
+          if (!selectedIds.includes(s.id) || s.locked) return s;
+          const next = [...s.s] as Vec3;
+          next[axis] = -(next[axis] || 0.004);
+          return { ...s, s: next };
+        }),
+        future: [],
+        contextMenu: null,
+      });
+      persist(get);
+      get().flash(axis === 0 ? "Flip H" : axis === 1 ? "Flip V" : "Flip D");
+    },
+    ensureAnchors: (id) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur || cur.locked) return;
+      if (normalizeAnchors(cur.anchors).length) {
+        if (!cur.loops?.length && normalizeAnchors(cur.anchors).length === 8) {
+          get().updateSolid(id, { loops: BOX_LOOPS.map((l) => [...l]) });
+        }
+        return;
+      }
+      const c = handleCorners(cur);
+      get().updateSolid(id, {
+        anchors: c.map((p) => ({
+          p,
+          kind: "corner" as const,
+          hin: [0, 0, 0] as Vec3,
+          hout: [0, 0, 0] as Vec3,
+        })),
+        loops: BOX_LOOPS.map((l) => [...l]),
+      });
+    },
     select: (id, additive = false) => {
       if (!id) {
-        set({ selectedId: null, selectedIds: [] });
+        set({ selectedId: null, selectedIds: [], contextMenu: null, guides: [] });
         return;
       }
       if (!additive) {
@@ -338,42 +446,62 @@ export const useForge = create<ForgeState>((set, get) => {
     addAnchor: (id, local) => {
       const cur = get().solids.find((s) => s.id === id);
       if (!cur || cur.locked) return;
+      const anchors = normalizeAnchors(cur.anchors);
+      if (anchors.length < 2) return;
+      const loops = inferLoops(anchors, cur.loops);
+      const hit = closestEdge(anchors, loops, local);
+      if (!hit) return;
       get().commit();
-      const anchors = [
-        ...normalizeAnchors(cur.anchors),
-        { p: local, kind: "corner" as const, hin: [0, 0, 0] as Vec3, hout: [0, 0, 0] as Vec3 },
+      const k = anchors.length;
+      const nextAnchors = [
+        ...anchors,
+        { p: hit.q, kind: "corner" as const, hin: [0, 0, 0] as Vec3, hout: [0, 0, 0] as Vec3 },
       ];
-      get().updateSolid(id, { anchors });
+      get().updateSolid(id, {
+        anchors: nextAnchors,
+        loops: splitEdge(loops, hit.a, hit.b, k),
+        path: true,
+      });
     },
     removeAnchor: (id, index) => {
       const cur = get().solids.find((s) => s.id === id);
       if (!cur?.anchors || cur.locked) return;
+      const anchors = normalizeAnchors(cur.anchors);
+      if (anchors.length <= 3) return;
       get().commit();
-      get().updateSolid(id, { anchors: normalizeAnchors(cur.anchors).filter((_, i) => i !== index) });
+      const loops = inferLoops(anchors, cur.loops);
+      get().updateSolid(id, {
+        anchors: anchors.filter((_, i) => i !== index),
+        loops: dropVertex(loops, index),
+        path: true,
+      });
     },
     moveAnchor: (id, index, local) => {
       const cur = get().solids.find((s) => s.id === id);
       if (!cur?.anchors || cur.locked) return;
       const anchors = normalizeAnchors(cur.anchors).map((a, i) => (i === index ? { ...a, p: local } : a));
-      get().updateSolid(id, { anchors });
+      get().updateSolid(id, {
+        anchors,
+        path: true,
+        loops: inferLoops(anchors, cur.loops),
+      });
     },
-    moveHandle: (id, index, which, offset, shift = false) => {
+    moveHandle: (id, index, which, offset) => {
       const cur = get().solids.find((s) => s.id === id);
       if (!cur?.anchors || cur.locked) return;
-      const off = shift ? snap45(offset) : offset;
       const anchors = normalizeAnchors(cur.anchors).map((a, i) => {
         if (i !== index) return a;
         if (a.kind !== "smooth") return a;
-        if (which === "hout") return { ...a, hout: off, hin: [-off[0], -off[1], -off[2]] as Vec3 };
-        return { ...a, hin: off, hout: [-off[0], -off[1], -off[2]] as Vec3 };
+        if (which === "hout") return { ...a, hout: offset, hin: [-offset[0], -offset[1], -offset[2]] as Vec3 };
+        return { ...a, hin: offset, hout: [-offset[0], -offset[1], -offset[2]] as Vec3 };
       });
-      get().updateSolid(id, { anchors });
+      get().updateSolid(id, { anchors, path: true });
     },
     convertAnchorAt: (id, index) => {
       const cur = get().solids.find((s) => s.id === id);
       if (!cur?.anchors || cur.locked) return;
       get().commit();
-      get().updateSolid(id, { anchors: convertAnchor(normalizeAnchors(cur.anchors), index) });
+      get().updateSolid(id, { anchors: convertAnchor(normalizeAnchors(cur.anchors), index), path: true });
     },
     mergeSelected: () => {
       const { selectedIds, solids, quad } = get();

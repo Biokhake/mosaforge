@@ -64,13 +64,11 @@ export function Inspector() {
   const applyBand = useForge((s) => s.applyBand);
   const mergeSelected = useForge((s) => s.mergeSelected);
   const cropSelected = useForge((s) => s.cropSelected);
-  const showGrid = useForge((s) => s.showGrid);
+  const flipSelected = useForge((s) => s.flipSelected);
   const showGhost = useForge((s) => s.showGhost);
   const showEdges = useForge((s) => s.showEdges);
   const showSocket = useForge((s) => s.showSocket);
-  const snap = useForge((s) => s.snap);
   const toggle = useForge((s) => s.toggle);
-  const setSnap = useForge((s) => s.setSnap);
   const mode = useForge((s) => s.mode);
   const setMode = useForge((s) => s.setMode);
 
@@ -175,6 +173,25 @@ export function Inspector() {
         </button>
       </div>
 
+      <div className="mt-3 font-mono text-2xs uppercase tracking-wider text-subtle">Flip</div>
+      <div className="mt-1 grid grid-cols-3 gap-1">
+        {([
+          [0, "H", "Horizontal"],
+          [1, "V", "Vertical"],
+          [2, "D", "Depth"],
+        ] as const).map(([axis, k, label]) => (
+          <button
+            key={k}
+            type="button"
+            title={label}
+            onClick={() => flipSelected(axis)}
+            className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg"
+          >
+            Flip {k}
+          </button>
+        ))}
+      </div>
+
       <div className="mt-4 space-y-4">
         <Axis
           label="Position"
@@ -198,12 +215,15 @@ export function Inspector() {
         />
         <Axis
           label="Size"
-          values={solid.s}
+          values={[Math.abs(solid.s[0]), Math.abs(solid.s[1]), Math.abs(solid.s[2])]}
           keys={["x", "y", "z"]}
           min={0.004}
           max={0.5}
           step={0.001}
-          onLive={(i, v) => updateSolid(solid.id, { s: patchVec(solid, "s", i, Math.max(0.002, v)) })}
+          onLive={(i, v) => {
+            const sign = solid.s[i] < 0 ? -1 : 1;
+            updateSolid(solid.id, { s: patchVec(solid, "s", i, Math.max(0.002, Math.abs(v)) * sign) });
+          }}
           onCommit={commit}
         />
       </div>
@@ -259,23 +279,9 @@ export function Inspector() {
             </button>
           ))}
         </div>
-        <label className="mt-3 flex items-center justify-between text-xs text-muted">
-          Snap
-          <select
-            value={snap}
-            onChange={(e) => setSnap(Number(e.target.value))}
-            className="h-7 rounded-sm border border-border bg-elevated px-1 font-mono text-2xs text-fg"
-          >
-            <option value={0}>off</option>
-            <option value={0.005}>0.005</option>
-            <option value={0.01}>0.01</option>
-            <option value={0.02}>0.02</option>
-          </select>
-        </label>
-        <div className="mt-2 grid grid-cols-2 gap-1">
+        <div className="mt-2 grid grid-cols-3 gap-1">
           {(
             [
-              ["showGrid", "Grid", showGrid],
               ["showGhost", "Ghost", showGhost],
               ["showEdges", "Edges", showEdges],
               ["showSocket", "Socket", showSocket],

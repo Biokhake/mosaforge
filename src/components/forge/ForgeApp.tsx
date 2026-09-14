@@ -5,6 +5,8 @@ import { Inspector } from "./Inspector";
 import { LibraryPanel } from "./LibraryPanel";
 import { SolidList } from "./SolidList";
 import { ToolRail } from "./ToolRail";
+import { ContextMenu } from "./ContextMenu";
+import { GridMenu } from "./GridMenu";
 import { TopBar } from "./TopBar";
 import { Button } from "@/components/ui/button";
 import { hydrateForgeFromStorage, useForge } from "@/lib/forge/store";
@@ -50,15 +52,38 @@ export function ForgeApp() {
   const removeSelected = useForge((s) => s.removeSelected);
   const cropSelected = useForge((s) => s.cropSelected);
   const mergeSelected = useForge((s) => s.mergeSelected);
+  const flipSelected = useForge((s) => s.flipSelected);
+  const cycleGrid = useForge((s) => s.cycleGrid);
   const toast = useForge((s) => s.toast);
   const solids = useForge((s) => s.solids);
   const slot = useForge((s) => s.slot);
   const tool = useForge((s) => s.tool);
+  const setSpace = useForge((s) => s.setSpace);
 
   useEffect(() => {
     hydrateForgeFromStorage();
     void useForge.getState().bootPacks();
   }, []);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.preventDefault();
+      if (!e.repeat) setSpace(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpace(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", () => setSpace(false));
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [setSpace]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -82,7 +107,22 @@ export function ForgeApp() {
         return;
       }
       if (e.metaKey || e.ctrlKey) return;
+      if (k === "Tab") {
+        e.preventDefault();
+        cycleGrid();
+        return;
+      }
+      if (e.shiftKey && (k === "h" || k === "H")) {
+        e.preventDefault();
+        flipSelected(0);
+        return;
+      }
       if (k === "v" || k === "V") {
+        if (e.shiftKey) {
+          e.preventDefault();
+          flipSelected(1);
+          return;
+        }
         setTool("v");
         return;
       }
@@ -120,7 +160,7 @@ export function ForgeApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, duplicateSelected, removeSelected, setMode, setTool, cropSelected, mergeSelected]);
+  }, [undo, redo, duplicateSelected, removeSelected, setMode, setTool, cropSelected, mergeSelected, flipSelected, cycleGrid]);
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-bg text-fg">
@@ -137,7 +177,7 @@ export function ForgeApp() {
               <ToolRail />
             </div>
             <div className="absolute left-14 top-3 rounded-md bg-elevated/80 px-2 py-1 font-mono text-2xs text-muted">
-              {slot} · {solids.length} · {tool === "shiftc" ? "⇧C" : tool.toUpperCase()} · 선택=편집 · 빈곳=궤도
+              {slot} · {solids.length} · {tool === "shiftc" ? "⇧C" : tool.toUpperCase()} · Tab=그리드
             </div>
           </div>
           {toast ? (
@@ -196,6 +236,8 @@ export function ForgeApp() {
           </div>
         </div>
       ) : null}
+      <ContextMenu />
+      <GridMenu />
     </div>
   );
 }

@@ -2,7 +2,10 @@
 
 **이 문서는 Grok 봇에게 파츠 생성 태스크를 줄 때 붙이는 단일 브리프다.** 행거 소스·CAD 없이 이 파일만으로 `mosa-forge-part` JSON을 만들 수 있어야 한다.
 
+갱신: 2026-09-14. 에디터는 Illustrator식 2.5D (V/A/+/−/C, 스마트 그리드, 변 위 앵커). 봇 산출은 여전히 **프리미티브 스택 JSON**. `anchors` / `loops` / `path` 는 사람이 에디터에서 깎을 때만 생긴다.
+
 행거 라이브: [mosa.grok.me](https://mosa.grok.me/)  
+Forge 라이브: [mosaforge.grok.me](https://mosaforge.grok.me/)  
 행거 제품 개요: [MOSA.md](attachments/MOSA.md)
 행거 인제스트 브리프: [MOSA-HANGAR.md](MOSA-HANGAR.md)
 
@@ -13,71 +16,138 @@
 | 제품 | 한다 | 안 한다 |
 |---|---|---|
 | **MOSA Hangar** | 골격 위 슬롯 조합, 킷 스타일 선택, 색·포즈 | 신규 메쉬 조형 |
-| **MOSA Forge** | 슬롯 1개의 솔리드 스택을 깎고 JSON으로 내보낸다 | 전신 리깅, GLB, CSG, 스컬프트 |
+| **MOSA Forge** | 슬롯 1개의 솔리드 스택을 깎고 JSON으로 내보낸다 | 전신 리깅, GLB, 스컬프트 브러시 |
 
 파츠는 밖에서 만들고, 행거는 조합만 맡는다. Forge가 그 밖이다.
 
 봇 산출물은 **슬롯 1개 · 킷 1개 · 솔리드 스택 1개**. 전신을 한 파일에 넣지 않는다.
 
+에디터의 Merge ∪ / Crop − 는 사람이 겹친 솔리드를 한 메쉬로 구울 때 쓴다. 봇은 CSG 없이 겹쳐 실루엣을 만든다.
+
 ---
 
 ## 1. 에디터 사용법
 
-화면은 상단 바 + 좌측 Solids + 중앙 뷰포트 + 우측 Inspector. 라이브러리 아이콘을 누르면 우측이 Library로 바뀌고, 슬라이더 아이콘으로 Inspector로 돌아온다.
+화면: 상단 바 + **좌측 툴레일** + Solids + 중앙 뷰포트 + 우측 Inspector. 라이브러리 아이콘 → 우측이 Library, 슬라이더 아이콘 → Inspector.
 
 ### 상단
 
 | 컨트롤 | 역할 |
 |---|---|
+| 로고 | MOSA 마크. 홈. |
 | 이름 | 파일명·라이브러리 라벨. `Helm · Blunt` 형식 권장. |
-| Slot | 붙일 소켓. 바꾸면 고스트 바디가 그 슬롯 기준으로 재정렬된다. **솔리드는 리셋되지 않는다.** |
+| Slot | 붙일 소켓. 바꾸면 고스트가 그 슬롯 기준으로 재정렬. **솔리드는 리셋되지 않는다.** |
 | SS / SR / RS / RR | 킷 밴드. 박스 필렛·원통 세그먼트에 영향. |
 | Letter A–Z | 밴드 안 랭크. 스킵 글자는 셀렉트에 없다. |
 | 킷 ID | `{quad}{letter}-{serial:03}` 미리보기. 예: `SSA-001`. |
 | Undo / Redo | 솔리드 히스토리. |
 | Reset | 현재 슬롯의 기본 시드를 다시 깐다. |
-| Save | 브라우저 라이브러리 (최대 40). |
+| Save | 브라우저 라이브러리. |
 | Library / Edit | 우측 패널 전환. |
-| Export JSON | `mosa-forge-part` 파일 다운로드. 행거가 읽는 `specs` 포함. |
-| Import JSON | 같은 스키마만 받는다. `kind`가 다르면 거부. |
+| Export JSON | `mosa-forge-part` 다운로드. 행거 `specs` 포함. |
+| Import JSON | 같은 스키마. zip이면 킷 일괄. `kind`가 다르면 거부. |
 | Snapshot | 뷰포트 PNG. |
+
+### 좌측 툴레일 (Illustrator)
+
+| 키 | 툴 | 동작 |
+|---|---|---|
+| V | Select | 개체 선택·이동. Shift 클릭 = 다중. |
+| A | Anchors | 선택 솔리드의 꼭짓점·변을 연다. |
+| + | Add anchor | 변 위에 점을 넣는다. **도형은 안 바뀐다.** |
+| − | Delete anchor | 점 제거. |
+| ⇧C | Convert | corner ↔ smooth (베지어 핸들). |
+| C | Crop 모드 | 툴 상태. 실제 crop은 ∪ 아래 Crop 버튼. |
+| ∪ | Merge | 선택 2개 이상 합친다. |
+| Crop | Crop | 첫 선택 남기고 나머지로 자른다. |
+| 숫자 | 칸 크기 | 그리드 켜기 전 셀. 기본 `0.02`. |
+| X / Y / Z | 스마트 그리드 | 해당 축 평면. 색 = 기즈모 (빨강/초록/파랑). |
 
 ### 뷰포트
 
-- 원점 `(0,0,0)` = **현재 슬롯의 소켓**. 금색 옥타가 소켓 마커.
+- 원점 `(0,0,0)` = **현재 슬롯의 소켓**. 금색 옥타 = 소켓.
 - 고스트 와이어 = 전신 볼륨. 현재 그룹은 밝다. 파츠가 이웃 슬롯을 먹으면 안 된다.
-- 드래그 공백 = 궤도 카메라. 솔리드 클릭 = 선택. 공백 클릭 = 선택 해제.
-- 선택 솔리드에 Transform gizmo. Inspector의 T / R / S 또는 단축키로 모드.
-- Snap 기본 `0.005`. 회전 스냅은 snap>0이면 `π/36`.
+- **공백 클릭** = 선택 해제. 개체를 그 자리로 옮기지 않는다.
+- **공백 드래그** = 궤도. **스페이스+드래그** = 선택 중에도 궤도.
+- **개체 드래그** = 이동. 이때 궤도 잠금.
+- 휠 = 항상 줌.
+- 선택 후 Gizmo는 **회전·스케일만**. 이동은 메시 드래그.
+- 우클릭 개체 = 메뉴 (복제, 좌우/상하/깊이 반전, 잠금, 숨김, Merge, Crop, 삭제).
+- Shift+클릭 = 다중 선택.
 
 ### 단축키
 
 | 키 | 동작 |
 |---|---|
-| G / 1 | Translate |
+| V A + − C | 툴 |
+| Shift+C | 앵커 변환 |
+| G / 1 | Translate 모드 (기즈모 숨김, 드래그 이동) |
 | R / 2 | Rotate |
 | S / 3 | Scale |
+| Tab | 그리드 순환 **X → Y → Z → 끄기** |
+| Space (홀드) | 궤도 |
+| Shift (앵커 드래그) | 축 고정. 그리드가 켜져 있으면 **켠 축만**. |
+| Shift (V 클릭) | 다중 선택 |
 | Ctrl/⌘ Z | Undo |
 | Ctrl/⌘ Shift Z | Redo |
 | Ctrl/⌘ D | Duplicate (+0.03 X) |
 | Delete / Backspace | 선택 삭제 (잠금이면 무시) |
 
-입력 필드에 포커스면 단축키 꺼진다.
+입력 필드 포커스면 단축키 꺼진다.
+
+### 스마트 그리드
+
+Y-up. 그리드는 **그 축이 들어 있는 평면**이다.
+
+| 버튼 | 색 | 평면 | 보이는 선 |
+|---|---|---|---|
+| X | 빨강 | XZ 바닥 | 가로 X + 깊이 Z |
+| Y | 초록 | YZ 옆 | 세로 Y + 깊이 Z |
+| Z | 파랑 | XY 앞 | 가로 X + 세로 Y |
+
+- 켜진 동안 원점에 RGB 기준축 + 칸 눈금(5칸마다 긴 눈금) + 흰 원점.
+- 그리드 선상 우클릭 = 그 축 칸 크기.
+- **스냅은 그리드가 켜져 있을 때만.** 칸 간격으로 붙는다. 꺼지면 자유 이동.
+- 앵커 이동도 같다. 그리드 켠 축만 움직인다 (X만 켜면 X만).
+
+### 앵커 (A / + / −)
+
+A를 누르면 박스 **8 꼭짓점**과 **실제 12 변**(시안 선)이 뜬다.
+
+예전에 보이던 파란 낙서는 꼭짓점 배열 순서 `0→1→…→7→0` 을 한 루프로 이은 제어 폴리곤이었다. 면 대각선·공간 대각선이 섞여 실제 변이 아니었다. 지금은 면 루프에서 뽑은 12 변만 그린다.
+
+| 동작 | 결과 |
+|---|---|
+| + 를 변 위에 | 그 변 위에 점. **실루엣 유지.** |
+| 그 점을 드래그 | 그때부터 면이 접힌다. |
+| Shift+드래그 | 우세 축으로 고정. |
+| ⇧C | corner ↔ smooth. smooth는 hin/hout. |
+| − | 점 삭제, 이웃 변이 다시 이어진다. |
+
+봇 JSON에는 `anchors`/`loops`/`path`를 넣지 않는다. 사람이 깎은 뒤에 Export하면 따라 나온다.
 
 ### Solids 패널
 
-- 상단 12 도형 버튼 = 그 도형을 스택에 추가. 선택 솔리드가 있으면 그 옆(+0.02 X)에 생긴다.
-- Seed = 슬롯별 아치 템플릿. **시드를 누르면 스택을 통째로 교체한다.**
+- 상단 12 도형 버튼 = 스택에 추가. 선택이 있으면 그 옆(+0.02 X).
+- Seed = 슬롯별 아치 템플릿. **시드는 스택을 통째로 교체.**
 - 눈 = visible. 잠금 = gizmo·삭제 차단.
+- 레이어 불투명도 슬라이더 (`o`, 0–1).
 - Add / Duplicate / Delete.
+- 솔리드 `op`: `add` (덧댐) / `sub` (빼기 표시). 실제 구멍은 Crop으로 굽는다.
 
-없는 슬롯은 Blank 시드 (trap + frame)만 나온다. 그게 조형 시작점이다.
+없는 슬롯은 Blank 시드 (trap + frame). 그게 조형 시작점이다.
 
 ### Inspector
 
-Shape, Layer(재질), Position / Rotation(rad) / Size, trap·cowl의 Depth `d`, 곡면 도형의 Segments `n`.
+Shape, Layer(재질), Opacity, Position / Rotation(rad) / Size, trap·cowl Depth `d`, 곡면 Segments `n`.
 
-Viewport 토글: Grid, Ghost, Edges, Socket. **Apply kit segments**는 현재 밴드·글자의 `n`을 cyl/sph/cone/capsule/prism/torus에 다시 찍는다.
+T / R / S. Ghost, Edges, Socket. **Apply kit segments**는 현재 밴드·글자의 `n`을 곡면에 다시 찍는다.
+
+그리드/스냅 토글은 Inspector에 없다. 좌측 레일 + Tab.
+
+### Library
+
+로컬 저장 + 내장 킷 팩. zip/JSON 일괄 등록. 행거로 보낼 완성 킷은 Export JSON (슬롯 단위) 또는 팩 단위.
 
 ---
 
@@ -143,7 +213,7 @@ Y-up, 오른손, Z+ = 전방 (얼굴·가슴이 +Z). 단위는 미터급. 헬름
 
 ## 3. 솔리드 언어
 
-한 파츠 = `Solid[]` 스택. CSG 없음. 겹쳐서 실루엣을 만든다. 권장 4–10개. 18개 넘기지 말 것.
+한 파츠 = `Solid[]` 스택. 봇은 CSG 없이 겹쳐서 실루엣을 만든다. 권장 4–10개. 18개 넘기지 말 것. Merge/Crop은 에디터 전용.
 
 ### Solid
 
@@ -157,8 +227,14 @@ r         [x,y,z]    오일러 rad, XYZ
 s         [a,b,c]    도형별 의미 다름. 스케일 필드가 아니라 치수.
 d?        number     trap / cowl 깊이
 n?        number     곡면 세그먼트
+o?        number     불투명도 0–1. 생략 = 1
+op?       "add"|"sub" 표시용. 봇은 생략하거나 add
 visible   boolean    false면 export specs에서 빠진다
 locked    boolean    에디터 잠금. 행거는 무시.
+anchors?  Anchor[]   에디터 케이지. 봇은 넣지 말 것
+loops?    number[][] 면 인덱스. 봇은 넣지 말 것
+path?     boolean    true면 케이지로 메쉬. 봇은 넣지 말 것
+mesh?     {pos,nrm,idx}  Merge/Crop 결과. 봇은 넣지 말 것
 ```
 
 ### Shape → `s` 의미
@@ -177,6 +253,7 @@ locked    boolean    에디터 잠금. 행거는 무시.
 | capsule | 캡슐 | a=반지름, b=원통 길이 | 0.03, 0.08, 0 |
 | octa | 팔면체 | a=반지름 | 0.05, 0, 0 |
 | torus | 토러스 | a=반지름, b=튜브 | 0.05, 0.012, 0 |
+| mesh | 구운 메쉬 | 무시. `mesh.pos` 사용 | — |
 
 가로 원통(액슬·피스톤)은 `cyl` + `r: [0, 0, π/2]` 또는 `[π/2, 0, 0]`.
 
@@ -351,6 +428,8 @@ n?  hex는 6. 그 외 곡면은 솔리드 n
 d?  trap|cowl 만
 ```
 
+`anchors` / `loops` / `path` / `mesh` 는 specs에 안 넣는다. 행거는 프리미티브 `t,s,p,r,n,d`만 읽는다. 케이지로 깎은 솔리드는 Export 전에 Merge로 `mesh`를 굽거나, 프리미티브로 다시 근사한다.
+
 ### 최소 예시 — SSA-001 Helm · Blunt
 
 ```json
@@ -417,6 +496,7 @@ d?  trap|cowl 만
 12. 좌측 슬롯이면 우측 시드의 X 미러. 이름을 `Lobe L`처럼 방향에 맞게.
 13. `n`이 밴드 공식과 같다 (곡면만).
 14. 회전은 radian. 90도를 `90`으로 넣지 말 것 (`1.571`).
+15. `anchors`/`loops`/`path`/`mesh`를 봇이 지어내지 않는다. 프리미티브만.
 
 ---
 
@@ -479,10 +559,11 @@ CONSTRAINTS:
   - 쉐브론(^) 금지. blunt = 뭉툭 테이퍼.
   - 소켓 로컬 좌표. 고스트 head 박스 준수.
   - 좌우 쌍은 R 기준 조형 후 X 미러.
+  - anchors/loops/path 금지. 프리미티브 스택만.
 DELIVER:
   - 슬롯당 mosa-forge-part JSON 1개
   - 파일명 {slot}-{kit}-{arch}.json
-  - 각 파일 품질 게이트 14항 통과
+  - 각 파일 품질 게이트 15항 통과
   - 한국어 3줄: 실루엣 / 쓴 형태소 / 의도적으로 뺀 것
 DO NOT:
   - 전신 한 파일
@@ -510,11 +591,13 @@ KIT: RRA-076
 3. 밀도 → 레이어 수·`n`을 계산한다.
 4. 소켓을 원점으로 볼륨을 짠다. 먼저 prim 두개골/셸, 그다음 dark 프레임, 그다음 glow, 마지막 sec/trim.
 5. JSON을 쓴다. `id`는 슬러그. `r` 0이면 `[0,0,0]`을 solids에 넣고 specs에서는 생략 가능.
-6. 게이트 14항을 체크한다.
-7. Forge에 Import → Ghost 켜고 궤도 → 이웃 침범 없으면 Export로 `specs`를 채운다.
+6. 게이트 15항을 체크한다.
+7. Forge에 Import → Ghost 켜고 궤도 → 이웃 침범 없으면 Export로 `specs`를 채운다. zip이면 Library 일괄.
 8. 미러 슬롯은 `p[0]*=-1`, `r`의 Y·Z 부호를 뒤집어 별 파일로 저장한다.
 
 한 봇이 한 카드. 한 번에 100킷을 만들지 않는다.
+
+사람이 에디터에서 다듬을 때: Import → V로 배치 → Tab 그리드 스냅 → A로 변 확인 → +로 점 추가 후 드래그 → 필요하면 Merge → Export.
 
 ---
 
@@ -522,5 +605,6 @@ KIT: RRA-076
 
 ```
 MOSA-FORGE.md를 브리프로 써서 KIT {id} PACKAGE {HEAD|TORSO|ARM|LEG|BACK} 파츠 JSON을 만들어.
-아치는 문법 표, 금기는 밴드 언어, 산출은 mosa-forge-part. 복제·스케일업 금지.
+아치는 문법 표, 금기는 밴드 언어, 산출은 mosa-forge-part 프리미티브 스택. 복제·스케일업·anchors 금지.
 ```
+

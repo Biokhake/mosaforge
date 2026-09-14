@@ -74,6 +74,8 @@ export interface Solid {
   o?: number;
   op?: BoolOp;
   anchors?: Anchor[];
+  loops?: number[][];
+  path?: boolean;
   mesh?: MeshData;
 }
 
@@ -181,6 +183,7 @@ export function cloneSolids(solids: Solid[]): Solid[] {
               },
         )
       : undefined,
+    loops: s.loops ? s.loops.map((l) => [...l]) : undefined,
     mesh: s.mesh
       ? {
           pos: [...s.mesh.pos],

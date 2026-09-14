@@ -4,22 +4,37 @@ import {
   ContactShadows,
   GizmoHelper,
   GizmoViewport,
-  Grid,
   OrbitControls,
   TransformControls,
 } from "@react-three/drei";
 import * as THREE from "three";
-import { handleCorners } from "@/lib/forge/csg";
 import { geometryFor } from "@/lib/forge/geometry";
 import { getLineMat, getPalette } from "@/lib/forge/palette";
 import { defaultScaleFor } from "@/lib/forge/scale";
 import { slotTargetWorld } from "@/lib/forge/fit";
 import { GHOST_BOXES, SLOT_BY_ID } from "@/lib/forge/slots";
 import { opacityOf, type Solid, type Vec3 } from "@/lib/forge/types";
-import { normalizeAnchors, samplePath } from "@/lib/forge/bezier";
+import { normalizeAnchors } from "@/lib/forge/bezier";
+import { edgePositions, inferLoops } from "@/lib/forge/cage";
+import { constrainMove, primaryCell, snapMove, snapVec, type GridAxis } from "@/lib/forge/snap";
+import { SmartGrids } from "@/components/forge/SmartGrid";
 import { useForge } from "@/lib/forge/store";
 
+type OrbitHandle = { enabled: boolean; enableRotate: boolean; enablePan: boolean };
+
 const meshMap = new Map<string, THREE.Mesh>();
+let orbitCtl: OrbitHandle | null = null;
+
+function lockOrbit(on: boolean) {
+  if (!orbitCtl) return;
+  orbitCtl.enableRotate = on;
+  orbitCtl.enablePan = on;
+  if (!on) {
+    orbitCtl.enabled = false;
+  } else if (!useForge.getState().dragging) {
+    orbitCtl.enabled = true;
+  }
+}
 
 function SolidMesh({
   solid,
@@ -47,7 +62,7 @@ function SolidMesh({
   } | null>(null);
   const geo = useMemo(
     () => geometryFor(solid, quad),
-    [solid.t, solid.s[0], solid.s[1], solid.s[2], solid.d, solid.n, solid.mesh, quad],
+    [solid.t, solid.s[0], solid.s[1], solid.s[2], solid.d, solid.n, solid.mesh, solid.path, solid.anchors, quad],
   );
   const pal = useMemo(() => getPalette(quad), [quad]);
   const line = useMemo(() => getLineMat(), []);
@@ -109,7 +124,15 @@ function SolidMesh({
       const hitLocal = hit.clone();
       m.parent?.worldToLocal(hitLocal);
       const delta = hitLocal.sub(sess.startHitLocal);
-      m.position.copy(sess.startPos).add(delta);
+      const raw: Vec3 = [
+        sess.startPos.x + delta.x,
+        sess.startPos.y + delta.y,
+        sess.startPos.z + delta.z,
+      ];
+      const st = useForge.getState();
+      const snapped = snapMove(solid.id, raw, st.solids, st.grids);
+      m.position.set(snapped.p[0], snapped.p[1], snapped.p[2]);
+      st.setGuides(snapped.guides);
     };
     const onUp = () => {
       if (!dragRef.current) return;
@@ -122,6 +145,7 @@ function SolidMesh({
         });
       }
       setDragging(false);
+      useForge.getState().setGuides([]);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -138,7 +162,17 @@ function SolidMesh({
       material={mat}
       visible={solid.visible}
       onPointerDown={(e) => {
+        if (e.button === 0 && useForge.getState().space) return;
         e.stopPropagation();
+        if (e.button === 2 || e.nativeEvent.button === 2) {
+          select(solid.id);
+          useForge.getState().setContextMenu({
+            x: e.nativeEvent.clientX,
+            y: e.nativeEvent.clientY,
+            id: solid.id,
+          });
+          return;
+        }
         const shift = e.nativeEvent.shiftKey;
         if (tool === "plus") {
           const local = e.object.worldToLocal(e.point.clone());
@@ -154,10 +188,8 @@ function SolidMesh({
             return;
           }
         }
-        const already = useForge.getState().selectedIds.includes(solid.id);
         select(solid.id, shift);
         if (tool !== "v" || solid.locked || shift) return;
-        if (!already) return;
         const m = ref.current;
         if (!m) return;
         const hitLocal = e.point.clone();
@@ -169,8 +201,12 @@ function SolidMesh({
         dragRef.current = { startHitLocal: hitLocal, startPos: m.position.clone(), plane };
         setDragging(true);
       }}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        e.nativeEvent.preventDefault();
+      }}
     >
-      {showEdges ? <lineSegments geometry={edges} material={line} /> : null}
+      {showEdges ? <lineSegments geometry={edges} material={line} raycast={() => {}} /> : null}
     </mesh>
   );
 }
@@ -181,23 +217,26 @@ function AnchorMarks({ solid }: { solid: Solid }) {
   const moveAnchor = useForge((s) => s.moveAnchor);
   const moveHandle = useForge((s) => s.moveHandle);
   const convertAnchorAt = useForge((s) => s.convertAnchorAt);
-  const addAnchor = useForge((s) => s.addAnchor);
   const commit = useForge((s) => s.commit);
   const user = normalizeAnchors(solid.anchors);
-  const boxes = handleCorners(solid);
-  const showBox = tool === "v" || tool === "a" || tool === "plus" || tool === "minus" || tool === "shiftc";
-  const [drag, setDrag] = useState<{ i: number; kind: "pt" | "hin" | "hout" } | null>(null);
+  const loops = inferLoops(user, solid.loops);
+  const [drag, setDrag] = useState<{
+    i: number;
+    kind: "pt" | "hin" | "hout";
+    start: Vec3;
+    lock: 0 | 1 | 2 | null;
+  } | null>(null);
   const { camera, gl } = useThree();
-  const curvePts = useMemo(() => samplePath(user, 14), [user]);
+  const edgePts = useMemo(() => edgePositions(user, loops), [user, loops]);
   const curveGeo = useMemo(() => {
-    if (curvePts.length < 6) return null;
+    if (edgePts.length < 6) return null;
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(curvePts, 3));
+    g.setAttribute("position", new THREE.Float32BufferAttribute(edgePts, 3));
     return g;
-  }, [curvePts]);
+  }, [edgePts]);
   const curveLine = useMemo(() => {
     if (!curveGeo) return null;
-    return new THREE.Line(curveGeo, new THREE.LineBasicMaterial({ color: 0x79d7ff }));
+    return new THREE.LineSegments(curveGeo, new THREE.LineBasicMaterial({ color: 0x79d7ff }));
   }, [curveGeo]);
 
   useEffect(() => () => {
@@ -236,15 +275,25 @@ function AnchorMarks({ solid }: { solid: Solid }) {
       ray.setFromCamera(ndc, camera);
       if (!ray.ray.intersectPlane(plane, hit)) return;
       const local = m.worldToLocal(hit.clone());
+      const st = useForge.getState();
+      const raw: Vec3 = [local.x, local.y, local.z];
+      const constrained = constrainMove(drag.start, raw, st.grids, ev.shiftKey, drag.lock);
+      drag.lock = constrained.lock;
       if (drag.kind === "pt") {
-        moveAnchor(solid.id, drag.i, [local.x, local.y, local.z]);
+        moveAnchor(solid.id, drag.i, constrained.p);
       } else {
-        moveHandle(solid.id, drag.i, drag.kind, [local.x - cur.p[0], local.y - cur.p[1], local.z - cur.p[2]], ev.shiftKey);
+        const curP = cur.p;
+        moveHandle(solid.id, drag.i, drag.kind, [
+          constrained.p[0] - curP[0],
+          constrained.p[1] - curP[1],
+          constrained.p[2] - curP[2],
+        ]);
       }
     };
     const onUp = () => {
       commit();
       setDrag(null);
+      useForge.getState().setDragging(false);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -259,14 +308,6 @@ function AnchorMarks({ solid }: { solid: Solid }) {
   return (
     <group position={solid.p} rotation={solid.r}>
       {curveLine ? <primitive object={curveLine} /> : null}
-      {showBox
-        ? boxes.map((p, i) => (
-            <mesh key={`b${i}`} position={p} raycast={() => {}}>
-              <boxGeometry args={[0.006, 0.006, 0.006]} />
-              <meshBasicMaterial color="#e8eaee" />
-            </mesh>
-          ))
-        : null}
       {user.map((a, i) => (
         <group key={`u${i}`}>
           {a.kind === "smooth" ? (
@@ -280,7 +321,13 @@ function AnchorMarks({ solid }: { solid: Solid }) {
                     onPointerDown={(e: ThreeEvent<PointerEvent>) => {
                       e.stopPropagation();
                       commit();
-                      setDrag({ i, kind: which });
+                      setDrag({
+                        i,
+                        kind: which,
+                        start: [a.p[0] + h[0], a.p[1] + h[1], a.p[2] + h[2]],
+                        lock: null,
+                      });
+                      useForge.getState().setDragging(true);
                     }}
                   >
                     <sphereGeometry args={[0.005, 8, 8]} />
@@ -303,9 +350,10 @@ function AnchorMarks({ solid }: { solid: Solid }) {
                 convertAnchorAt(solid.id, i);
                 return;
               }
-              if (tool === "a" || tool === "v") {
+              if (tool === "a" || tool === "v" || tool === "plus") {
                 commit();
-                setDrag({ i, kind: "pt" });
+                setDrag({ i, kind: "pt", start: [a.p[0], a.p[1], a.p[2]], lock: null });
+                useForge.getState().setDragging(true);
               }
             }}
             onClick={(e) => {
@@ -314,21 +362,11 @@ function AnchorMarks({ solid }: { solid: Solid }) {
               if (tool === "shiftc") convertAnchorAt(solid.id, i);
             }}
           >
-            {a.kind === "smooth" ? <sphereGeometry args={[0.008, 10, 10]} /> : <octahedronGeometry args={[0.008, 0]} />}
+            {a.kind === "smooth" ? <sphereGeometry args={[0.01, 10, 10]} /> : <octahedronGeometry args={[0.01, 0]} />}
             <meshBasicMaterial color={tool === "shiftc" || tool === "minus" ? "#c43b3b" : "#79d7ff"} />
           </mesh>
         </group>
       ))}
-      {tool === "plus" ? (
-        <mesh
-          raycast={() => {}}
-          onClick={(e) => {
-            e.stopPropagation();
-            const local = e.object.parent ? e.object.parent.worldToLocal(e.point.clone()) : e.point;
-            addAnchor(solid.id, [local.x, local.y, local.z] as Vec3);
-          }}
-        />
-      ) : null}
     </group>
   );
 }
@@ -337,32 +375,47 @@ function Gizmo() {
   const selectedId = useForge((s) => s.selectedId);
   const tool = useForge((s) => s.tool);
   const mode = useForge((s) => s.mode);
-  const snap = useForge((s) => s.snap);
+  const grids = useForge((s) => s.grids);
+  const cell = primaryCell(grids);
   const solids = useForge((s) => s.solids);
   const updateSolid = useForge((s) => s.updateSolid);
   const commit = useForge((s) => s.commit);
   const setDragging = useForge((s) => s.setDragging);
   const selected = solids.find((s) => s.id === selectedId);
   const [object, setObject] = useState<THREE.Object3D | null>(null);
+  const ctrlRef = useRef<THREE.Object3D | null>(null);
 
   useLayoutEffect(() => {
     setObject(selectedId ? (meshMap.get(selectedId) ?? null) : null);
   }, [selectedId, selected?.p, selected?.r]);
 
+  useLayoutEffect(() => {
+    const root = ctrlRef.current;
+    if (!root) return;
+    root.traverse((o) => {
+      if (o.name === "XYZ" || o.name === "XY" || o.name === "YZ" || o.name === "XZ" || o.name === "XYZE") {
+        o.visible = false;
+        o.raycast = () => {};
+      }
+    });
+  }, [object, mode]);
+
   if (tool !== "v") return null;
   if (!selected || !object || selected.locked || !selected.visible) return null;
+  if (mode === "translate") return null;
 
-  const rotSnap = snap > 0 ? Math.PI / 36 : undefined;
+  const rotSnap = cell > 0 ? Math.PI / 36 : undefined;
 
   return (
     <TransformControls
+      ref={ctrlRef as never}
       object={object}
       mode={mode}
-      size={0.85}
+      size={0.55}
       space="local"
-      translationSnap={snap || undefined}
+      translationSnap={cell || undefined}
       rotationSnap={rotSnap}
-      scaleSnap={snap ? 0.05 : undefined}
+      scaleSnap={cell || undefined}
       onMouseDown={() => setDragging(true)}
       onMouseUp={() => {
         const mesh = meshMap.get(selected.id);
@@ -433,16 +486,23 @@ function SocketMark() {
   );
 }
 
-function isEditHit(obj: THREE.Object3D): boolean {
+function isKeepHit(obj: THREE.Object3D): boolean {
   let o: THREE.Object3D | null = obj;
   while (o) {
     if (o.userData?.forgeSolid || o.userData?.forgeAnchor) return true;
-    const n = o.constructor?.name ?? "";
-    if (n.includes("TransformControlsGizmo")) return true;
-    if (/^(X|Y|Z|E|XY|YZ|XZ|XYZ|XYZE)$/.test(o.name)) return true;
+    if (o.name === "X" || o.name === "Y" || o.name === "Z" || o.name === "E") return true;
     o = o.parent;
   }
   return false;
+}
+
+function pickEditTargets(scene: THREE.Scene): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    if (o.userData?.forgeSolid || o.userData?.forgeAnchor) out.push(o);
+    else if (o.name === "X" || o.name === "Y" || o.name === "Z" || o.name === "E") out.push(o);
+  });
+  return out;
 }
 
 function EmptyClickDeselect() {
@@ -452,23 +512,75 @@ function EmptyClickDeselect() {
   useEffect(() => {
     const el = gl.domElement;
     const raycaster = new THREE.Raycaster();
+    raycaster.params.Line = { threshold: 0.0004 };
     const ndc = new THREE.Vector2();
-    const onDown = (ev: PointerEvent) => {
-      if (ev.button !== 0) return;
-      if (useForge.getState().dragging) return;
+    const hitTest = (ev: PointerEvent) => {
       const rect = el.getBoundingClientRect();
       ndc.set(
         ((ev.clientX - rect.left) / rect.width) * 2 - 1,
         -((ev.clientY - rect.top) / rect.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
-      const hits = raycaster.intersectObjects(scene.children, true);
-      if (!hits.some((h) => isEditHit(h.object))) {
-        useForge.getState().select(null);
-      }
+      const hits = raycaster.intersectObjects(pickEditTargets(scene), false);
+      return hits.some((h) => isKeepHit(h.object));
     };
-    el.addEventListener("pointerdown", onDown);
-    return () => el.removeEventListener("pointerdown", onDown);
+    const hitGrid = (ev: PointerEvent): GridAxis | null => {
+      const rect = el.getBoundingClientRect();
+      ndc.set(
+        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const grids: THREE.Object3D[] = [];
+      scene.traverse((o) => {
+        if (o.userData?.forgeGrid) grids.push(o);
+      });
+      const hits = raycaster.intersectObjects(grids, false);
+      const axis = hits[0]?.object.userData?.forgeGrid;
+      return axis === "x" || axis === "y" || axis === "z" ? axis : null;
+    };
+    const down = { x: 0, y: 0, empty: false };
+    const onDown = (ev: PointerEvent) => {
+      if (ev.button === 2) {
+        ev.preventDefault();
+        const axis = hitGrid(ev);
+        if (axis) {
+          useForge.getState().setContextMenu(null);
+          useForge.getState().setGridMenu({ x: ev.clientX, y: ev.clientY, axis });
+          return;
+        }
+        if (!hitTest(ev)) {
+          useForge.getState().setContextMenu(null);
+          useForge.getState().setGridMenu(null);
+        }
+        return;
+      }
+      if (ev.button !== 0) return;
+      if (useForge.getState().dragging) return;
+      down.x = ev.clientX;
+      down.y = ev.clientY;
+      const hit = hitTest(ev);
+      down.empty = !hit;
+      if (hit && !useForge.getState().space) lockOrbit(false);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.button !== 0) return;
+      if (!useForge.getState().dragging) lockOrbit(true);
+      if (!down.empty) return;
+      down.empty = false;
+      if (useForge.getState().space) return;
+      if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 6) return;
+      useForge.getState().select(null);
+    };
+    const onCtx = (ev: Event) => ev.preventDefault();
+    el.addEventListener("pointerdown", onDown, true);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("contextmenu", onCtx);
+    return () => {
+      el.removeEventListener("pointerdown", onDown, true);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("contextmenu", onCtx);
+    };
   }, [gl, camera, scene]);
   return null;
 }
@@ -494,6 +606,38 @@ function CaptureBridge({
   return null;
 }
 
+function SnapGuides() {
+  const guides = useForge((s) => s.guides);
+  const lines = useMemo(() => {
+    return guides.map((g, i) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute([g.a[0], g.a[1], g.a[2], g.b[0], g.b[1], g.b[2]], 3),
+      );
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xc4a35a }));
+      line.userData.i = i;
+      return line;
+    });
+  }, [guides]);
+  useEffect(
+    () => () => {
+      lines.forEach((l) => {
+        l.geometry.dispose();
+        (l.material as THREE.Material).dispose();
+      });
+    },
+    [lines],
+  );
+  return (
+    <>
+      {lines.map((l, i) => (
+        <primitive key={i} object={l} />
+      ))}
+    </>
+  );
+}
+
 export function ForgeCanvas({
   captureRef,
 }: {
@@ -501,18 +645,15 @@ export function ForgeCanvas({
 }) {
   const solids = useForge((s) => s.solids);
   const selectedIds = useForge((s) => s.selectedIds);
-  const showGrid = useForge((s) => s.showGrid);
   const showGhost = useForge((s) => s.showGhost);
   const showEdges = useForge((s) => s.showEdges);
   const showSocket = useForge((s) => s.showSocket);
   const dragging = useForge((s) => s.dragging);
+  const space = useForge((s) => s.space);
   const theme = useForge((s) => s.theme);
   const tool = useForge((s) => s.tool);
-  const select = useForge((s) => s.select);
-  const selectedId = useForge((s) => s.selectedId);
   const bg = theme === "dark" ? "#0b0c0e" : "#f4f1ea";
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const editing = !!selectedId;
 
   return (
     <Canvas
@@ -527,10 +668,6 @@ export function ForgeCanvas({
         failIfMajorPerformanceCaveat: false,
       }}
       camera={{ position: [0.3, 0.12, 0.36], fov: 36, near: 0.01, far: 40 }}
-      onPointerMissed={() => {
-        if (useForge.getState().dragging) return;
-        select(null);
-      }}
       onCreated={({ gl, size, camera }) => {
         gl.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
         if (size.width > 0 && size.height > 0) {
@@ -538,7 +675,13 @@ export function ForgeCanvas({
           camera.updateProjectionMatrix();
         }
       }}
-      style={{ width: "100%", height: "100%", display: "block", background: bg }}
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "block",
+        background: bg,
+        cursor: space ? "grab" : "default",
+      }}
     >
       <color attach="background" args={[bg]} />
       <hemisphereLight args={[theme === "dark" ? "#c8ccd4" : "#fff8ee", "#1a1c21", 0.65]} />
@@ -561,30 +704,24 @@ export function ForgeCanvas({
             <AnchorMarks key={`a-${s.id}`} solid={s} />
           ))}
         <Gizmo />
+        <SnapGuides />
+        <SmartGrids />
       </SlotSpace>
       {showGhost ? <Ghost /> : null}
       {showSocket ? <SocketMark /> : null}
-
-      {showGrid ? (
-        <Grid
-          infiniteGrid
-          fadeDistance={2.4}
-          fadeStrength={1.4}
-          cellSize={0.02}
-          sectionSize={0.1}
-          cellColor={theme === "dark" ? "#2a2d33" : "#d4cdc2"}
-          sectionColor={theme === "dark" ? "#3a3e46" : "#b8b0a4"}
-          position={[0, -0.16, 0]}
-          raycast={() => {}}
-        />
-      ) : null}
       <ContactShadows position={[0, -0.155, 0]} opacity={0.35} scale={1.4} blur={2.2} far={0.6} />
 
       <OrbitControls
+        ref={(c) => {
+          orbitCtl = c as OrbitHandle | null;
+        }}
         makeDefault
         enableDamping
         dampingFactor={0.12}
-        enabled={!editing && !dragging}
+        enabled={!dragging || space}
+        enableRotate={!dragging || space}
+        enablePan={!dragging || space}
+        enableZoom
         minDistance={0.12}
         maxDistance={4}
         target={[0, 0.02, 0]}
