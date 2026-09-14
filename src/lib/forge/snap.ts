@@ -45,9 +45,14 @@ function snap1(v: number, cells: number[]): number {
 }
 
 export function snapVec(p: Vec3, grids: Grids): Vec3 {
+  if (!anyGridOn(grids)) return p;
+  const allow = enabledAxes(grids);
   const cells = activeCells(grids);
-  if (!cells.length) return p;
-  return [snap1(p[0], cells), snap1(p[1], cells), snap1(p[2], cells)];
+  return [
+    allow[0] ? snap1(p[0], cells) : p[0],
+    allow[1] ? snap1(p[1], cells) : p[1],
+    allow[2] ? snap1(p[2], cells) : p[2],
+  ];
 }
 
 function guideLine(axis: 0 | 1 | 2, v: number): Guide {

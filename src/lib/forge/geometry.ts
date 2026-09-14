@@ -178,45 +178,108 @@ function pathGeometry(solid: Solid): THREE.BufferGeometry | null {
   return extrudeRing(sampleRing(anchors, segs), depth);
 }
 
+export function flipSolid(solid: Solid, axis: 0 | 1 | 2): Solid {
+  const flip = (v: Vec3): Vec3 => {
+    const n: Vec3 = [v[0], v[1], v[2]];
+    n[axis] = -(n[axis] || 0);
+    return n;
+  };
+  const anchors = solid.anchors
+    ? normalizeAnchors(solid.anchors).map((a) => ({
+        ...a,
+        p: flip(a.p),
+        hin: flip(a.hin),
+        hout: flip(a.hout),
+      }))
+    : solid.anchors;
+  let mesh = solid.mesh;
+  if (mesh?.pos?.length) {
+    const pos = mesh.pos.slice();
+    for (let i = axis; i < pos.length; i += 3) pos[i] = -(pos[i] || 0);
+    let nrm = mesh.nrm ? mesh.nrm.slice() : undefined;
+    if (nrm) for (let i = axis; i < nrm.length; i += 3) nrm[i] = -(nrm[i] || 0);
+    mesh = { ...mesh, pos, nrm };
+  }
+  const s: Vec3 = [solid.s[0], solid.s[1], solid.s[2]];
+  s[axis] = -(s[axis] || 0.004);
+  const r: Vec3 = [solid.r[0], solid.r[1], solid.r[2]];
+  if (axis === 0) {
+    r[1] = -r[1];
+    r[2] = -r[2];
+  } else if (axis === 1) {
+    r[0] = -r[0];
+    r[2] = -r[2];
+  } else {
+    r[0] = -r[0];
+    r[1] = -r[1];
+  }
+  return { ...solid, s, r, anchors, mesh };
+}
+
 export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
-  const shaped = pathGeometry(solid);
-  if (shaped) return shaped;
-  const [a, b, c] = solid.s;
+  const bevel = solid.b ?? 0;
+  const roundBox = solid.t === "box" && (bevel > 0.0008 || (quad === "SR" && bevel === 0));
+  if (!roundBox) {
+    const shaped = pathGeometry(solid);
+    if (shaped) return shaped;
+  }
+  const sx = Math.sign(solid.s[0]) || 1;
+  const sy = Math.sign(solid.s[1]) || 1;
+  const sz = Math.sign(solid.s[2]) || 1;
+  const a = Math.abs(solid.s[0]);
+  const b = Math.abs(solid.s[1]);
+  const c = Math.abs(solid.s[2]);
   const n = Math.max(3, Math.round(solid.n ?? (quad === "SS" ? 6 : quad === "SR" ? 12 : 16)));
+  let geo: THREE.BufferGeometry;
   switch (solid.t) {
     case "box": {
-      const rad = solid.b ?? (quad === "SR" ? Math.min(a, b, c) * 0.08 : 0);
-      if (rad > 0.0008) {
-        return new RoundedBoxGeometry(a, b, c, Math.max(1, Math.min(4, Math.round(solid.n ?? 2))), Math.min(rad, Math.min(a, b, c) * 0.49));
-      }
-      return new THREE.BoxGeometry(a, b, c);
+      const rad = bevel > 0 ? bevel : quad === "SR" ? Math.min(a, b, c) * 0.08 : 0;
+      geo =
+        rad > 0.0008
+          ? new RoundedBoxGeometry(a, b, c, Math.max(1, Math.min(4, Math.round(solid.n ?? 2))), Math.min(rad, Math.min(a, b, c) * 0.49))
+          : new THREE.BoxGeometry(a, b, c);
+      break;
     }
     case "cyl":
-      return new THREE.CylinderGeometry(a, b || a, c, n);
+      geo = new THREE.CylinderGeometry(a, b || a, c, n);
+      break;
     case "hex":
-      return new THREE.CylinderGeometry(a, b || a, c, 6);
+      geo = new THREE.CylinderGeometry(a, b || a, c, 6);
+      break;
     case "prism":
-      return new THREE.CylinderGeometry(a, b || a, c, Math.max(5, n));
+      geo = new THREE.CylinderGeometry(a, b || a, c, Math.max(5, n));
+      break;
     case "sph":
-      return new THREE.SphereGeometry(a, n, Math.max(6, Math.floor(n * 0.7)));
+      geo = new THREE.SphereGeometry(a, n, Math.max(6, Math.floor(n * 0.7)));
+      break;
     case "cone":
-      return new THREE.ConeGeometry(b || a, c, n);
+      geo = new THREE.ConeGeometry(b || a, c, n);
+      break;
     case "capsule":
-      return new THREE.CapsuleGeometry(a, Math.max(0.01, b), 4, n);
+      geo = new THREE.CapsuleGeometry(a, Math.max(0.01, b), 4, n);
+      break;
     case "octa":
-      return new THREE.OctahedronGeometry(a, 0);
+      geo = new THREE.OctahedronGeometry(a, 0);
+      break;
     case "torus":
-      return new THREE.TorusGeometry(a, Math.max(0.004, b), Math.max(6, Math.floor(n / 2)), n);
+      geo = new THREE.TorusGeometry(a, Math.max(0.004, b), Math.max(6, Math.floor(n / 2)), n);
+      break;
     case "trap":
-      return createTrapGeometry(a, b, c, solid.d ?? 0.06);
+      geo = createTrapGeometry(a, b, c, solid.d ?? 0.06);
+      break;
     case "wedge":
-      return createWedgeGeometry(a, b, c);
+      geo = createWedgeGeometry(a, b, c);
+      break;
     case "cowl":
-      return createCowlGeometry(a, b, c);
+      geo = createCowlGeometry(a, b, c);
+      break;
     case "mesh": {
       const data = solid.mesh;
-      if (!data?.pos?.length) return new THREE.BoxGeometry(0.04, 0.04, 0.04);
-      const geo = new THREE.BufferGeometry();
+      if (!data?.pos?.length) {
+        geo = new THREE.BoxGeometry(0.04, 0.04, 0.04);
+        break;
+      }
+      geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(data.pos, 3));
       if (data.nrm && data.nrm.length === data.pos.length) {
         geo.setAttribute("normal", new THREE.Float32BufferAttribute(data.nrm, 3));
@@ -228,6 +291,12 @@ export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
       return geo;
     }
     default:
-      return new THREE.BoxGeometry(a, b, c);
+      geo = new THREE.BoxGeometry(a, b, c);
   }
+  if (sx < 0 || sy < 0 || sz < 0) {
+    geo.applyMatrix4(new THREE.Matrix4().makeScale(sx, sy, sz));
+    geo.computeVertexNormals();
+  }
+  return geo;
 }
+

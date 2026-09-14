@@ -16,7 +16,7 @@ import { GHOST_BOXES, SLOT_BY_ID } from "@/lib/forge/slots";
 import { opacityOf, type Solid, type Vec3 } from "@/lib/forge/types";
 import { normalizeAnchors } from "@/lib/forge/bezier";
 import { edgePositions, inferLoops } from "@/lib/forge/cage";
-import { constrainMove, primaryCell, snapMove, snapVec, type GridAxis } from "@/lib/forge/snap";
+import { constrainMove, primaryCell, snapVec, type GridAxis } from "@/lib/forge/snap";
 import { SmartGrids } from "@/components/forge/SmartGrid";
 import { useForge } from "@/lib/forge/store";
 import { remapSolid } from "@/lib/forge/stamp";
@@ -60,10 +60,11 @@ function SolidMesh({
     startHitLocal: THREE.Vector3;
     startPos: THREE.Vector3;
     plane: THREE.Plane;
+    lock: 0 | 1 | 2 | null;
   } | null>(null);
   const geo = useMemo(
     () => geometryFor(solid, quad),
-    [solid.t, solid.s[0], solid.s[1], solid.s[2], solid.d, solid.n, solid.mesh, solid.path, solid.anchors, quad],
+    [solid, quad],
   );
   const pal = useMemo(() => getPalette(quad), [quad]);
   const line = useMemo(() => getLineMat(), []);
@@ -131,9 +132,16 @@ function SolidMesh({
         sess.startPos.z + delta.z,
       ];
       const st = useForge.getState();
-      const snapped = snapMove(solid.id, raw, st.solids, st.grids);
-      m.position.set(snapped.p[0], snapped.p[1], snapped.p[2]);
-      st.setGuides(snapped.guides);
+      const start: Vec3 = [sess.startPos.x, sess.startPos.y, sess.startPos.z];
+      const constrained = constrainMove(start, raw, st.grids, ev.shiftKey, sess.lock);
+      sess.lock = constrained.lock;
+      m.position.set(constrained.p[0], constrained.p[1], constrained.p[2]);
+      const allow = st.grids;
+      const guides = [];
+      if (allow.x.on) guides.push({ a: [constrained.p[0], -0.24, 0] as Vec3, b: [constrained.p[0], 0.24, 0] as Vec3 });
+      if (allow.y.on) guides.push({ a: [-0.24, constrained.p[1], 0] as Vec3, b: [0.24, constrained.p[1], 0] as Vec3 });
+      if (allow.z.on) guides.push({ a: [0, -0.24, constrained.p[2]] as Vec3, b: [0, 0.24, constrained.p[2]] as Vec3 });
+      st.setGuides(guides);
     };
     const onUp = () => {
       if (!dragRef.current) return;
@@ -199,7 +207,7 @@ function SolidMesh({
           camera.getWorldDirection(new THREE.Vector3()).negate(),
           e.point,
         );
-        dragRef.current = { startHitLocal: hitLocal, startPos: m.position.clone(), plane };
+        dragRef.current = { startHitLocal: hitLocal, startPos: m.position.clone(), plane, lock: null };
         setDragging(true);
       }}
       onContextMenu={(e) => {

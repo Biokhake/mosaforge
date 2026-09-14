@@ -33,6 +33,7 @@ import {
 } from "./io";
 import { hangarSaveForKit } from "./hangar-export";
 import { subtractSolids, uniteSolids } from "./csg";
+import { flipSolid } from "./geometry";
 import { ensureHangarLocal, migrateItemToHangar, visualSizeToLocal, defaultScaleFor } from "./scale";
 import { STAMP_HINT, stampCut as runStamp, type StampAxis } from "./stamp";
 import { buildSeed, defaultSeedFor, seedsForSlot } from "./templates";
@@ -412,13 +413,17 @@ export const useForge = create<ForgeState>((set, get) => {
       const picks = solids.filter((s) => selectedIds.includes(s.id));
       if (!picks.length) return;
       get().commit();
-      const copies = picks.map((cur) => ({
-        ...cloneSolids([cur])[0]!,
-        id: uid(),
-        name: cur.name + " mir",
-        p: [-cur.p[0], cur.p[1], cur.p[2]] as Vec3,
-        r: [cur.r[0], -cur.r[1], -cur.r[2]] as Vec3,
-      }));
+      const copies = picks.map((cur) => {
+        const copy = {
+          ...cloneSolids([cur])[0]!,
+          id: uid(),
+          name: cur.name + " mir",
+          p: [-cur.p[0], cur.p[1], cur.p[2]] as Vec3,
+          r: [cur.r[0], -cur.r[1], -cur.r[2]] as Vec3,
+        };
+        if (Math.abs(copy.p[0] - cur.p[0]) < 0.002) copy.p[0] = -(Math.abs(cur.s[0]) + 0.01);
+        return copy;
+      });
       const ids = copies.map((c) => c.id);
       set((st) => ({
         solids: [...st.solids, ...copies],
@@ -483,12 +488,7 @@ export const useForge = create<ForgeState>((set, get) => {
       if (!selectedIds.length) return;
       get().commit();
       set({
-        solids: solids.map((s) => {
-          if (!selectedIds.includes(s.id) || s.locked) return s;
-          const next = [...s.s] as Vec3;
-          next[axis] = -(next[axis] || 0.004);
-          return { ...s, s: next };
-        }),
+        solids: solids.map((s) => (selectedIds.includes(s.id) && !s.locked ? flipSolid(s, axis) : s)),
         future: [],
         contextMenu: null,
       });
