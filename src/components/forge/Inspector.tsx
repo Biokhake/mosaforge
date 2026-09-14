@@ -68,6 +68,9 @@ export function Inspector() {
   const mirrorSelected = useForge((s) => s.mirrorSelected);
   const alignSelected = useForge((s) => s.alignSelected);
   const addJointRing = useForge((s) => s.addJointRing);
+  const selectedLoop = useForge((s) => s.selectedLoop);
+  const setBulge = useForge((s) => s.setBulge);
+  const bakeBulges = useForge((s) => s.bakeBulges);
   const showGhost = useForge((s) => s.showGhost);
   const showEdges = useForge((s) => s.showEdges);
   const showSocket = useForge((s) => s.showSocket);
@@ -197,18 +200,64 @@ export function Inspector() {
 
       <div className="mt-3 font-mono text-2xs uppercase tracking-wider text-subtle">Low poly</div>
       <label className="mt-1 grid grid-cols-[52px_1fr_40px] items-center gap-2">
-        <span className="font-mono text-2xs text-muted">Bevel</span>
+        <span className="font-mono text-2xs text-muted">Round</span>
         <input
           type="range"
           min={0}
           max={0.04}
           step={0.001}
           value={solid.b ?? 0}
-          onChange={(e) => updateSolid(solid.id, { b: Number(e.target.value) })}
+          onChange={(e) => {
+            const b = Number(e.target.value);
+            updateSolid(solid.id, { b, ch: b > 0.0008 ? 0 : solid.ch });
+          }}
           onPointerUp={commit}
         />
         <span className="text-right font-mono text-2xs text-subtle">{(solid.b ?? 0).toFixed(3)}</span>
       </label>
+      <label className="mt-1 grid grid-cols-[52px_1fr_40px] items-center gap-2">
+        <span className="font-mono text-2xs text-muted">Bevel</span>
+        <input
+          type="range"
+          min={0}
+          max={0.04}
+          step={0.001}
+          value={solid.ch ?? 0}
+          onChange={(e) => {
+            const ch = Number(e.target.value);
+            updateSolid(solid.id, { ch, b: ch > 0.0008 ? 0 : solid.b });
+          }}
+          onPointerUp={commit}
+        />
+        <span className="text-right font-mono text-2xs text-subtle">{(solid.ch ?? 0).toFixed(3)}</span>
+      </label>
+      {selectedLoop != null ? (
+        <label className="mt-1 grid grid-cols-[52px_1fr_40px] items-center gap-2">
+          <span className="font-mono text-2xs text-muted">Bulge</span>
+          <input
+            type="range"
+            min={-0.08}
+            max={0.08}
+            step={0.001}
+            value={solid.bulges?.find((b) => b.loop === selectedLoop)?.k ?? 0}
+            onChange={(e) =>
+              setBulge(
+                solid.id,
+                selectedLoop,
+                Number(e.target.value),
+                solid.bulges?.find((b) => b.loop === selectedLoop)?.ax ?? 1,
+              )
+            }
+            onPointerUp={() => {
+              bakeBulges(solid.id);
+              commit();
+            }}
+          />
+          <span className="text-right font-mono text-2xs text-subtle">
+            {(solid.bulges?.find((b) => b.loop === selectedLoop)?.k ?? 0).toFixed(3)}
+          </span>
+        </label>
+      ) : null}
       <div className="mt-1 grid grid-cols-2 gap-1">
         <button type="button" onClick={mirrorSelected} className="rounded-sm bg-surface py-1.5 font-mono text-2xs text-muted hover:text-fg">
           Mirror X

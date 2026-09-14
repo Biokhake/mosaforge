@@ -17,6 +17,7 @@ import { opacityOf, type Solid, type Vec3 } from "@/lib/forge/types";
 import { normalizeAnchors } from "@/lib/forge/bezier";
 import { edgePositions, inferLoops } from "@/lib/forge/cage";
 import { constrainMove, primaryCell, snapVec, type GridAxis } from "@/lib/forge/snap";
+import { bulgeAxis, faceNormal, hitLoop, innerRing } from "@/lib/forge/face";
 import { SmartGrids } from "@/components/forge/SmartGrid";
 import { useForge } from "@/lib/forge/store";
 import { remapSolid } from "@/lib/forge/stamp";
@@ -62,6 +63,7 @@ function SolidMesh({
     plane: THREE.Plane;
     lock: 0 | 1 | 2 | null;
   } | null>(null);
+  const bulgeRef = useRef<{ loop: number; ax: 0 | 1 | 2; startK: number; start: number } | null>(null);
   const geo = useMemo(
     () => geometryFor(solid, quad),
     [solid, quad],
@@ -111,8 +113,36 @@ function SolidMesh({
 
   useEffect(() => {
     const onMove = (ev: PointerEvent) => {
-      const sess = dragRef.current;
+      const bulge = bulgeRef.current;
       const m = ref.current;
+      if (bulge && m) {
+        const rect = gl.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+          -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(ndc, camera);
+        const hits = ray.intersectObject(m, false);
+        const pt = hits[0]?.point.clone() ?? (() => {
+          const p = new THREE.Plane().setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(new THREE.Vector3()).negate(),
+            m.getWorldPosition(new THREE.Vector3()),
+          );
+          const h = new THREE.Vector3();
+          if (!ray.ray.intersectPlane(p, h)) return null;
+          return h;
+        })();
+        if (!pt) return;
+        const local = m.worldToLocal(pt);
+        const st = useForge.getState();
+        let k = bulge.startK + (local.getComponent(bulge.ax) - bulge.start);
+        const cell = primaryCell(st.grids);
+        if (cell > 0) k = Math.round(k / cell) * cell;
+        st.setBulge(solid.id, bulge.loop, k, bulge.ax);
+        return;
+      }
+      const sess = dragRef.current;
       if (!sess || !m) return;
       const rect = gl.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -144,6 +174,15 @@ function SolidMesh({
       st.setGuides(guides);
     };
     const onUp = () => {
+      if (bulgeRef.current) {
+        const id = solid.id;
+        bulgeRef.current = null;
+        const st = useForge.getState();
+        st.bakeBulges(id);
+        st.weldSolid(id);
+        setDragging(false);
+        return;
+      }
       if (!dragRef.current) return;
       const m = ref.current;
       dragRef.current = null;
@@ -170,6 +209,7 @@ function SolidMesh({
       geometry={geo}
       material={mat}
       visible={solid.visible}
+      raycast={tool === "a" || tool === "minus" ? () => {} : undefined}
       onPointerDown={(e) => {
         if (e.button === 0 && useForge.getState().space) return;
         e.stopPropagation();
@@ -187,6 +227,25 @@ function SolidMesh({
           const local = e.object.worldToLocal(e.point.clone());
           addAnchor(solid.id, [local.x, local.y, local.z]);
           select(solid.id, shift);
+          return;
+        }
+        if (tool === "b") {
+          const st = useForge.getState();
+          st.ensureAnchors(solid.id);
+          const cur = st.solids.find((x) => x.id === solid.id);
+          const anchors = normalizeAnchors(cur?.anchors);
+          const loops = inferLoops(anchors, cur?.loops);
+          const local = e.object.worldToLocal(e.point.clone());
+          const loop = hitLoop(anchors, loops, [local.x, local.y, local.z]);
+          select(solid.id, shift);
+          if (loop < 0) return;
+          const pts = loops[loop]!.map((i) => anchors[i]!.p);
+          const ax = bulgeAxis(faceNormal(pts), st.grids);
+          const startK = cur?.bulges?.find((b) => b.loop === loop)?.k ?? 0;
+          st.setSelectedLoop(loop);
+          st.commit();
+          bulgeRef.current = { loop, ax, startK, start: local.getComponent(ax) };
+          setDragging(true);
           return;
         }
         if (tool === "c") {
@@ -224,14 +283,15 @@ function AnchorMarks({ solid }: { solid: Solid }) {
   const tool = useForge((s) => s.tool);
   const removeAnchor = useForge((s) => s.removeAnchor);
   const moveAnchor = useForge((s) => s.moveAnchor);
-  const moveHandle = useForge((s) => s.moveHandle);
-  const convertAnchorAt = useForge((s) => s.convertAnchorAt);
+  const weldSolid = useForge((s) => s.weldSolid);
   const commit = useForge((s) => s.commit);
+  const selectedLoop = useForge((s) => s.selectedLoop);
+  const bakeBulges = useForge((s) => s.bakeBulges);
   const user = normalizeAnchors(solid.anchors);
   const loops = inferLoops(user, solid.loops);
   const [drag, setDrag] = useState<{
     i: number;
-    kind: "pt" | "hin" | "hout";
+    kind: "pt";
     start: Vec3;
     lock: 0 | 1 | 2 | null;
   } | null>(null);
@@ -250,9 +310,7 @@ function AnchorMarks({ solid }: { solid: Solid }) {
 
   useEffect(() => () => {
     curveGeo?.dispose();
-    if (curveLine) {
-      (curveLine.material as THREE.Material).dispose();
-    }
+    if (curveLine) (curveLine.material as THREE.Material).dispose();
   }, [curveGeo, curveLine]);
 
   useEffect(() => {
@@ -265,15 +323,7 @@ function AnchorMarks({ solid }: { solid: Solid }) {
       const list = normalizeAnchors(useForge.getState().solids.find((x) => x.id === solid.id)?.anchors);
       const cur = list[drag.i];
       if (!cur) return;
-      const origin =
-        drag.kind === "pt"
-          ? cur.p
-          : [
-              cur.p[0] + (drag.kind === "hout" ? cur.hout[0] : cur.hin[0]),
-              cur.p[1] + (drag.kind === "hout" ? cur.hout[1] : cur.hin[1]),
-              cur.p[2] + (drag.kind === "hout" ? cur.hout[2] : cur.hin[2]),
-            ];
-      const world = m.localToWorld(new THREE.Vector3(origin[0], origin[1], origin[2]));
+      const world = m.localToWorld(new THREE.Vector3(cur.p[0], cur.p[1], cur.p[2]));
       plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()).negate(), world);
       const rect = gl.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -288,19 +338,10 @@ function AnchorMarks({ solid }: { solid: Solid }) {
       const raw: Vec3 = [local.x, local.y, local.z];
       const constrained = constrainMove(drag.start, raw, st.grids, ev.shiftKey, drag.lock);
       drag.lock = constrained.lock;
-      if (drag.kind === "pt") {
-        moveAnchor(solid.id, drag.i, constrained.p);
-      } else {
-        const curP = cur.p;
-        moveHandle(solid.id, drag.i, drag.kind, [
-          constrained.p[0] - curP[0],
-          constrained.p[1] - curP[1],
-          constrained.p[2] - curP[2],
-        ]);
-      }
+      moveAnchor(solid.id, drag.i, constrained.p);
     };
     const onUp = () => {
-      commit();
+      weldSolid(solid.id);
       setDrag(null);
       useForge.getState().setDragging(false);
     };
@@ -310,72 +351,84 @@ function AnchorMarks({ solid }: { solid: Solid }) {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [drag, camera, gl, solid.id, moveAnchor, moveHandle, commit]);
+  }, [drag, camera, gl, solid.id, moveAnchor, weldSolid, commit]);
 
   if (!solid.visible) return null;
+  const face = selectedLoop != null ? loops[selectedLoop] : null;
 
   return (
     <group position={solid.p} rotation={solid.r}>
       {curveLine ? <primitive object={curveLine} /> : null}
+      {face && face.length >= 3 ? (
+        <mesh raycast={() => {}}>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              args={[
+                new Float32Array(
+                  face.flatMap((_, i) => {
+                    if (i === 0 || i === face.length - 1) return [];
+                    const a = user[face[0]!]!.p;
+                    const b = user[face[i]!]!.p;
+                    const c = user[face[i + 1]!]!.p;
+                    return [...a, ...b, ...c];
+                  }),
+                ),
+                3,
+              ]}
+            />
+          </bufferGeometry>
+          <meshBasicMaterial color="#79d7ff" transparent opacity={0.18} depthWrite={false} />
+        </mesh>
+      ) : null}
       {user.map((a, i) => (
-        <group key={`u${i}`}>
-          {a.kind === "smooth" ? (
-            <>
-              {(["hin", "hout"] as const).map((which) => {
-                const h = which === "hin" ? a.hin : a.hout;
-                return (
-                  <mesh
-                    key={which}
-                    position={[a.p[0] + h[0], a.p[1] + h[1], a.p[2] + h[2]]}
-                    onPointerDown={(e: ThreeEvent<PointerEvent>) => {
-                      e.stopPropagation();
-                      commit();
-                      setDrag({
-                        i,
-                        kind: which,
-                        start: [a.p[0] + h[0], a.p[1] + h[1], a.p[2] + h[2]],
-                        lock: null,
-                      });
-                      useForge.getState().setDragging(true);
-                    }}
-                  >
-                    <sphereGeometry args={[0.005, 8, 8]} />
-                    <meshBasicMaterial color="#e8eaee" />
-                  </mesh>
-                );
-              })}
-            </>
-          ) : null}
+        <mesh
+          key={`u${i}`}
+          position={a.p}
+          userData={{ forgeAnchor: true }}
+          onPointerDown={(e: ThreeEvent<PointerEvent>) => {
+            e.stopPropagation();
+            if (tool === "minus") {
+              removeAnchor(solid.id, i);
+              return;
+            }
+            if (tool === "a" || tool === "v" || tool === "plus" || tool === "b") {
+              commit();
+              setDrag({ i, kind: "pt", start: [a.p[0], a.p[1], a.p[2]], lock: null });
+              useForge.getState().setDragging(true);
+            }
+          }}
+        >
+          <octahedronGeometry args={[0.01, 0]} />
+          <meshBasicMaterial color={tool === "minus" ? "#c43b3b" : "#79d7ff"} />
+        </mesh>
+      ))}
+      {(solid.bulges ?? []).flatMap((b) => {
+        const loop = loops[b.loop];
+        if (!loop) return [];
+        const pts = loop.map((i) => user[i]?.p).filter(Boolean) as Vec3[];
+        if (pts.length < 3) return [];
+        const inner = innerRing(pts, b.k, b.ax);
+        return inner.map((p, i) => (
           <mesh
-            position={a.p}
+            key={`bg-${b.loop}-${i}`}
+            position={p}
             userData={{ forgeAnchor: true }}
             onPointerDown={(e: ThreeEvent<PointerEvent>) => {
               e.stopPropagation();
-              if (tool === "minus") {
-                removeAnchor(solid.id, i);
-                return;
-              }
-              if (tool === "shiftc") {
-                convertAnchorAt(solid.id, i);
-                return;
-              }
-              if (tool === "a" || tool === "v" || tool === "plus") {
-                commit();
-                setDrag({ i, kind: "pt", start: [a.p[0], a.p[1], a.p[2]], lock: null });
-                useForge.getState().setDragging(true);
-              }
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (tool === "minus") removeAnchor(solid.id, i);
-              if (tool === "shiftc") convertAnchorAt(solid.id, i);
+              const before = normalizeAnchors(solid.anchors).length;
+              bakeBulges(solid.id);
+              const idx = before + i;
+              commit();
+              setDrag({ i: idx, kind: "pt", start: [p[0], p[1], p[2]], lock: null });
+              useForge.getState().setDragging(true);
             }}
           >
-            {a.kind === "smooth" ? <sphereGeometry args={[0.01, 10, 10]} /> : <octahedronGeometry args={[0.01, 0]} />}
-            <meshBasicMaterial color={tool === "shiftc" || tool === "minus" ? "#c43b3b" : "#79d7ff"} />
+            <octahedronGeometry args={[0.012, 0]} />
+            <meshBasicMaterial color="#e6c36a" />
           </mesh>
-        </group>
-      ))}
+        ));
+      })}
     </group>
   );
 }
@@ -740,7 +793,7 @@ export function ForgeCanvas({
           />
         ))}
         {solids
-          .filter((s) => selectedSet.has(s.id) && (tool === "v" || tool === "a" || tool === "plus" || tool === "minus" || tool === "shiftc"))
+          .filter((s) => selectedSet.has(s.id) && (tool === "v" || tool === "a" || tool === "plus" || tool === "minus" || tool === "b"))
           .map((s) => (
             <AnchorMarks key={`a-${s.id}`} solid={s} />
           ))}

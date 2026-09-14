@@ -18,8 +18,9 @@ import {
   type Vec3,
 } from "./types";
 import { handleCorners } from "./csg";
-import { convertAnchor, normalizeAnchors } from "./bezier";
-import { BOX_LOOPS, closestEdge, dropVertex, inferLoops, splitEdge } from "./cage";
+import { normalizeAnchors } from "./bezier";
+import { BOX_LOOPS, closestEdge, dropVertex, inferLoops, splitEdge, weldAnchors } from "./cage";
+import { bakeAll } from "./face";
 import { defaultGrids } from "./snap";
 import {
   downloadJson,
@@ -118,6 +119,7 @@ export interface ForgeState {
   kitDraft: Record<string, SlotDraft>;
   stampSlot: string | null;
   stampAxis: StampAxis;
+  selectedLoop: number | null;
 
   kit: () => string;
   selected: () => Solid | null;
@@ -160,8 +162,10 @@ export interface ForgeState {
   addAnchor: (id: string, local: Vec3) => void;
   removeAnchor: (id: string, index: number) => void;
   moveAnchor: (id: string, index: number, local: Vec3) => void;
-  moveHandle: (id: string, index: number, which: "hin" | "hout", offset: Vec3) => void;
-  convertAnchorAt: (id: string, index: number) => void;
+  weldSolid: (id: string) => void;
+  setBulge: (id: string, loop: number, k: number, ax: 0 | 1 | 2) => void;
+  bakeBulges: (id: string) => void;
+  setSelectedLoop: (n: number | null) => void;
   mergeSelected: () => void;
   cropSelected: () => void;
   applyBand: () => void;
@@ -239,6 +243,7 @@ export const useForge = create<ForgeState>((set, get) => {
     },
     stampSlot: STAMP_HINT[initial.slot]?.cutter ?? null,
     stampAxis: STAMP_HINT[initial.slot]?.axis ?? "x",
+    selectedLoop: null,
 
     kit: () => {
       const { quad, letter } = get();
@@ -318,10 +323,11 @@ export const useForge = create<ForgeState>((set, get) => {
     setMode: (m) => set({ mode: m, tool: "v" }),
     setTool: (t) => {
       set({ tool: t, contextMenu: null });
-      if (t === "a" || t === "plus" || t === "minus" || t === "shiftc") {
-        const id = get().selectedId;
+      const id = get().selectedId;
+      if (t === "a" || t === "plus" || t === "minus" || t === "b") {
         if (id) get().ensureAnchors(id);
       }
+      if (id && (t === "a" || t === "plus" || t === "minus" || t === "v")) get().bakeBulges(id);
     },
     setSnap: (n) => set({ snap: n }),
     toggle: (k) => set((s) => ({ [k]: !s[k] })),
@@ -500,7 +506,9 @@ export const useForge = create<ForgeState>((set, get) => {
       if (!cur || cur.locked) return;
       if (normalizeAnchors(cur.anchors).length) {
         if (!cur.loops?.length && normalizeAnchors(cur.anchors).length === 8) {
-          get().updateSolid(id, { loops: BOX_LOOPS.map((l) => [...l]) });
+          get().updateSolid(id, { loops: BOX_LOOPS.map((l) => [...l]), path: true });
+        } else if (!cur.path) {
+          get().updateSolid(id, { path: true });
         }
         return;
       }
@@ -513,15 +521,16 @@ export const useForge = create<ForgeState>((set, get) => {
           hout: [0, 0, 0] as Vec3,
         })),
         loops: BOX_LOOPS.map((l) => [...l]),
+        path: true,
       });
     },
     select: (id, additive = false) => {
       if (!id) {
-        set({ selectedId: null, selectedIds: [], contextMenu: null, guides: [] });
+        set({ selectedId: null, selectedIds: [], selectedLoop: null, contextMenu: null, guides: [] });
         return;
       }
       if (!additive) {
-        set({ selectedId: id, selectedIds: [id] });
+        set({ selectedId: id, selectedIds: [id], selectedLoop: null });
         return;
       }
       const cur = get().selectedIds;
@@ -633,6 +642,7 @@ export const useForge = create<ForgeState>((set, get) => {
         loops: splitEdge(loops, hit.a, hit.b, k),
         path: true,
       });
+      get().weldSolid(id);
     },
     removeAnchor: (id, index) => {
       const cur = get().solids.find((s) => s.id === id);
@@ -657,22 +667,34 @@ export const useForge = create<ForgeState>((set, get) => {
         loops: inferLoops(anchors, cur.loops),
       });
     },
-    moveHandle: (id, index, which, offset) => {
+    weldSolid: (id) => {
       const cur = get().solids.find((s) => s.id === id);
-      if (!cur?.anchors || cur.locked) return;
-      const anchors = normalizeAnchors(cur.anchors).map((a, i) => {
-        if (i !== index) return a;
-        if (a.kind !== "smooth") return a;
-        if (which === "hout") return { ...a, hout: offset, hin: [-offset[0], -offset[1], -offset[2]] as Vec3 };
-        return { ...a, hin: offset, hout: [-offset[0], -offset[1], -offset[2]] as Vec3 };
-      });
-      get().updateSolid(id, { anchors, path: true });
+      if (!cur?.anchors) return;
+      const w = weldAnchors(normalizeAnchors(cur.anchors), inferLoops(cur.anchors, cur.loops));
+      if (!w.changed) return;
+      get().updateSolid(id, { anchors: w.anchors, loops: w.loops, path: true });
+      get().flash("Anchors welded");
     },
-    convertAnchorAt: (id, index) => {
+    setSelectedLoop: (n) => set({ selectedLoop: n }),
+    setBulge: (id, loop, k, ax) => {
       const cur = get().solids.find((s) => s.id === id);
-      if (!cur?.anchors || cur.locked) return;
-      get().commit();
-      get().updateSolid(id, { anchors: convertAnchor(normalizeAnchors(cur.anchors), index), path: true });
+      if (!cur || cur.locked) return;
+      const rest = (cur.bulges ?? []).filter((b) => b.loop !== loop);
+      const bulges = Math.abs(k) < 1e-4 ? rest : [...rest, { loop, k, ax }];
+      get().updateSolid(id, { bulges, path: true });
+      set({ selectedLoop: loop });
+    },
+    bakeBulges: (id) => {
+      const cur = get().solids.find((s) => s.id === id);
+      if (!cur?.bulges?.length) return;
+      const next = bakeAll(cur);
+      const w = weldAnchors(normalizeAnchors(next.anchors), inferLoops(next.anchors, next.loops));
+      get().updateSolid(id, {
+        anchors: w.anchors,
+        loops: w.loops,
+        bulges: next.bulges,
+        path: true,
+      });
     },
     mergeSelected: () => {
       const { selectedIds, solids, quad } = get();
@@ -737,11 +759,15 @@ export const useForge = create<ForgeState>((set, get) => {
     undo: () => {
       const { past, solids, future } = get();
       const prev = past[past.length - 1];
-      if (!prev) return;
+      if (!prev) {
+        get().flash("Nothing to undo");
+        return;
+      }
       set({
         past: past.slice(0, -1),
         future: [cloneSolids(solids), ...future],
         solids: cloneSolids(prev),
+        dragging: false,
       });
       persist(get);
     },

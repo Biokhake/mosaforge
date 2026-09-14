@@ -101,3 +101,55 @@ export function edgePositions(anchors: Anchor[], loops: number[][]): number[] {
 export function inferLoops(raw?: unknown, loopSrc?: number[][]): number[][] {
   return loopsOf(normalizeAnchors(raw), loopSrc);
 }
+
+export function weldAnchors(
+  anchors: Anchor[],
+  loops: number[][],
+  eps = 0.0015,
+): { anchors: Anchor[]; loops: number[][]; changed: boolean } {
+  const n = anchors.length;
+  if (n < 2) return { anchors, loops, changed: false };
+  const parent = anchors.map((_, i) => i);
+  const find = (i: number): number => {
+    let x = i;
+    while (parent[x] !== x) x = parent[x]!;
+    return x;
+  };
+  const unite = (a: number, b: number) => {
+    const pa = find(a);
+    const pb = find(b);
+    if (pa !== pb) parent[pa] = pb;
+  };
+  for (let i = 0; i < n; i++) {
+    const a = anchors[i]!.p;
+    for (let j = i + 1; j < n; j++) {
+      const b = anchors[j]!.p;
+      if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= eps) unite(i, j);
+    }
+  }
+  const first = new Map<number, number>();
+  const out: Anchor[] = [];
+  const remap: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!first.has(r)) {
+      first.set(r, out.length);
+      out.push(anchors[r]!);
+    }
+    remap[i] = first.get(r)!;
+  }
+  if (out.length === n) return { anchors, loops, changed: false };
+  const nextLoops = loops
+    .map((loop) => {
+      const seq: number[] = [];
+      for (const idx of loop) {
+        const v = remap[idx];
+        if (v === undefined) continue;
+        if (seq[seq.length - 1] !== v) seq.push(v);
+      }
+      if (seq.length > 1 && seq[0] === seq[seq.length - 1]) seq.pop();
+      return seq;
+    })
+    .filter((l) => new Set(l).size >= 3);
+  return { anchors: out, loops: nextLoops, changed: true };
+}

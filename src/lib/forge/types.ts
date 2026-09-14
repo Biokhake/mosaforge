@@ -42,7 +42,7 @@ export type GroupId =
 
 export type BoolOp = "add" | "sub";
 
-export type EditTool = "v" | "a" | "plus" | "minus" | "c" | "shiftc";
+export type EditTool = "v" | "a" | "plus" | "minus" | "c" | "b";
 
 export type AnchorKind = "corner" | "smooth";
 
@@ -57,6 +57,12 @@ export interface MeshData {
   pos: number[];
   nrm?: number[];
   idx?: number[];
+}
+
+export interface FaceBulge {
+  loop: number;
+  k: number;
+  ax: 0 | 1 | 2;
 }
 
 export interface Solid {
@@ -74,9 +80,11 @@ export interface Solid {
   o?: number;
   op?: BoolOp;
   b?: number;
+  ch?: number;
   anchors?: Anchor[];
   loops?: number[][];
   path?: boolean;
+  bulges?: FaceBulge[];
   mesh?: MeshData;
 }
 
@@ -185,6 +193,7 @@ export function cloneSolids(solids: Solid[]): Solid[] {
         )
       : undefined,
     loops: s.loops ? s.loops.map((l) => [...l]) : undefined,
+    bulges: s.bulges ? s.bulges.map((b) => ({ ...b })) : undefined,
     mesh: s.mesh
       ? {
           pos: [...s.mesh.pos],

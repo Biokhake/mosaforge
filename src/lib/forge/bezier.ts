@@ -47,7 +47,21 @@ function len(a: Vec3): number {
   return Math.hypot(a[0], a[1], a[2]);
 }
 
-export function convertAnchor(anchors: Anchor[], i: number): Anchor[] {
+function neighborIds(index: number, loops?: number[][]): number[] {
+  if (!loops?.length) return [];
+  const seen = new Set<number>();
+  for (const loop of loops) {
+    const n = loop.length;
+    for (let k = 0; k < n; k++) {
+      if (loop[k] !== index) continue;
+      seen.add(loop[(k - 1 + n) % n]!);
+      seen.add(loop[(k + 1) % n]!);
+    }
+  }
+  return [...seen];
+}
+
+export function convertAnchor(anchors: Anchor[], i: number, loops?: number[][]): Anchor[] {
   const cur = anchors[i];
   if (!cur) return anchors;
   if (cur.kind === "smooth") {
@@ -55,14 +69,21 @@ export function convertAnchor(anchors: Anchor[], i: number): Anchor[] {
       k === i ? { ...a, kind: "corner" as const, hin: [0, 0, 0] as Vec3, hout: [0, 0, 0] as Vec3 } : a,
     );
   }
-  const n = anchors.length;
-  const prev = n > 1 ? anchors[(i - 1 + n) % n] : null;
-  const next = n > 1 ? anchors[(i + 1) % n] : null;
+  const nbr = neighborIds(i, loops);
   let t: Vec3 = [0.02, 0, 0];
-  if (prev && next && n >= 2) {
-    t = scale(sub(next.p, prev.p), 1 / 6);
-    if (len(t) < 0.006) t = [0.02, 0, 0];
+  if (nbr.length >= 2) {
+    t = scale(sub(anchors[nbr[0]!]!.p, anchors[nbr[nbr.length - 1]!]!.p), 1 / 3);
+    if (len(t) < 0.004) t = scale(sub(anchors[nbr[0]!]!.p, cur.p), 1 / 3);
+  } else if (nbr.length === 1) {
+    t = scale(sub(anchors[nbr[0]!]!.p, cur.p), 1 / 3);
+  } else {
+    const n = anchors.length;
+    const prev = n > 1 ? anchors[(i - 1 + n) % n] : null;
+    const next = n > 1 ? anchors[(i + 1) % n] : null;
+    if (prev && next) t = scale(sub(next.p, prev.p), 1 / 6);
   }
+  if (len(t) < 0.006) t = [0.02, 0, 0];
+  t = snapCard(t);
   return anchors.map((a, k) =>
     k === i ? { ...a, kind: "smooth" as const, hin: scale(t, -1), hout: t } : a,
   );
@@ -106,6 +127,28 @@ export function snap45(v: Vec3): Vec3 {
 
 function add(a: Vec3, b: Vec3): Vec3 {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function snapCard(v: Vec3): Vec3 {
+  const dirs: Vec3[] = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+  ];
+  const L = Math.max(0.012, len(v));
+  let best: Vec3 = [1, 0, 0];
+  let score = -Infinity;
+  for (const d of dirs) {
+    const s = v[0] * d[0] + v[1] * d[1] + v[2] * d[2];
+    if (s > score) {
+      score = s;
+      best = d;
+    }
+  }
+  return scale(best, L);
 }
 
 export function cubicPoint(a: Anchor, b: Anchor, t: number): Vec3 {

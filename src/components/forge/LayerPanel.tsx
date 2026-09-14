@@ -43,6 +43,7 @@ export function LayerPanel() {
           <button
             key={tab}
             type="button"
+            title={tab === "kit" ? "Outline (`)" : "Solids (`)"}
             onClick={() => setLeftTab(tab)}
             className={cn(
               "flex-1 py-2 font-display text-2xs font-semibold uppercase tracking-[0.14em]",

@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import type { Quad, Solid, Vec3 } from "./types";
+import type { Anchor, Quad, Solid, Vec3 } from "./types";
 import { normalizeAnchors, cubicPoint } from "./bezier";
 import { inferLoops } from "./cage";
+import { innerRing, type FaceBulge } from "./face";
 
 function facesToGeo(positions: number[]): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
@@ -143,13 +144,105 @@ function extrudeRing(ring: Vec3[], depth: number): THREE.BufferGeometry | null {
   return geo;
 }
 
-function meshFromLoops(pts: Vec3[], loops: number[][]): THREE.BufferGeometry | null {
+function lerpV(a: Vec3, b: Vec3, t: number): Vec3 {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+function atCurve(curve: Vec3[], t: number): Vec3 {
+  const n = curve.length - 1;
+  if (n <= 0) return curve[0] ?? [0, 0, 0];
+  const x = Math.min(n, Math.max(0, t * n));
+  const i = Math.min(n - 1, Math.floor(x));
+  return lerpV(curve[i]!, curve[i + 1]!, x - i);
+}
+
+function resampleEdge(a: Anchor, b: Anchor, div: number): Vec3[] {
+  const pts: Vec3[] = [];
+  for (let s = 0; s <= div; s++) pts.push(cubicPoint(a, b, s / div));
+  return pts;
+}
+
+function rev(curve: Vec3[]): Vec3[] {
+  return curve.slice().reverse();
+}
+
+function coonsPoint(u: number, v: number, c0: Vec3[], c1: Vec3[], d0: Vec3[], d1: Vec3[]): Vec3 {
+  const lu = lerpV(atCurve(c0, u), atCurve(c1, u), v);
+  const lv = lerpV(atCurve(d0, v), atCurve(d1, v), u);
+  const p00 = c0[0]!;
+  const p10 = c0[c0.length - 1]!;
+  const p01 = c1[0]!;
+  const p11 = c1[c1.length - 1]!;
+  const b: Vec3 = [
+    p00[0] * (1 - u) * (1 - v) + p10[0] * u * (1 - v) + p01[0] * (1 - u) * v + p11[0] * u * v,
+    p00[1] * (1 - u) * (1 - v) + p10[1] * u * (1 - v) + p01[1] * (1 - u) * v + p11[1] * u * v,
+    p00[2] * (1 - u) * (1 - v) + p10[2] * u * (1 - v) + p01[2] * (1 - u) * v + p11[2] * u * v,
+  ];
+  return [lu[0] + lv[0] - b[0], lu[1] + lv[1] - b[1], lu[2] + lv[2] - b[2]];
+}
+
+function fillCoons(pos: number[], a: Anchor, b: Anchor, c: Anchor, d: Anchor, div: number) {
+  const c0 = resampleEdge(a, b, div);
+  const d1 = resampleEdge(b, c, div);
+  const c1 = rev(resampleEdge(c, d, div));
+  const d0 = rev(resampleEdge(d, a, div));
+  const grid: Vec3[][] = [];
+  for (let j = 0; j <= div; j++) {
+    const row: Vec3[] = [];
+    for (let i = 0; i <= div; i++) row.push(coonsPoint(i / div, j / div, c0, c1, d0, d1));
+    grid.push(row);
+  }
+  for (let j = 0; j < div; j++) {
+    for (let i = 0; i < div; i++) {
+      const p00 = grid[j]![i]!;
+      const p10 = grid[j]![i + 1]!;
+      const p01 = grid[j + 1]![i]!;
+      const p11 = grid[j + 1]![i + 1]!;
+      pushTri(pos, p00, p10, p11);
+      pushTri(pos, p00, p11, p01);
+    }
+  }
+}
+
+function fillFan(pos: number[], ring: Vec3[]) {
+  if (ring.length < 3) return;
+  const c: Vec3 = [0, 0, 0];
+  for (const p of ring) {
+    c[0] += p[0];
+    c[1] += p[1];
+    c[2] += p[2];
+  }
+  const n = ring.length;
+  c[0] /= n;
+  c[1] /= n;
+  c[2] /= n;
+  for (let i = 0; i < n; i++) pushTri(pos, c, ring[i]!, ring[(i + 1) % n]!);
+}
+
+function meshFromLoops(anchors: Anchor[], loops: number[][], bulges?: FaceBulge[]): THREE.BufferGeometry | null {
   const pos: number[] = [];
-  for (const loop of loops) {
+  for (let li = 0; li < loops.length; li++) {
+    const loop = loops[li]!;
     if (loop.length < 3) continue;
-    const v = loop.map((i) => pts[i]).filter(Boolean) as Vec3[];
-    if (v.length < 3) continue;
-    for (let i = 1; i < v.length - 1; i++) pushTri(pos, v[0]!, v[i]!, v[i + 1]!);
+    const pts = loop.map((i) => anchors[i]?.p).filter(Boolean) as Vec3[];
+    if (pts.length < 3) continue;
+    const bulge = bulges?.find((b) => b.loop === li && Math.abs(b.k) > 1e-4);
+    if (bulge) {
+      const inner = innerRing(pts, bulge.k, bulge.ax);
+      for (let i = 0; i < pts.length; i++) {
+        const j = (i + 1) % pts.length;
+        pushTri(pos, pts[i]!, pts[j]!, inner[j]!);
+        pushTri(pos, pts[i]!, inner[j]!, inner[i]!);
+      }
+      for (let i = 1; i < inner.length - 1; i++) pushTri(pos, inner[0]!, inner[i]!, inner[i + 1]!);
+      continue;
+    }
+    if (pts.length === 4) {
+      pushTri(pos, pts[0]!, pts[1]!, pts[2]!);
+      pushTri(pos, pts[0]!, pts[2]!, pts[3]!);
+    } else {
+      fillFan(pos, pts);
+    }
   }
   if (pos.length < 9) return null;
   const geo = new THREE.BufferGeometry();
@@ -158,16 +251,38 @@ function meshFromLoops(pts: Vec3[], loops: number[][]): THREE.BufferGeometry | n
   return geo;
 }
 
+function cageEdited(solid: Solid): boolean {
+  const anchors = normalizeAnchors(solid.anchors);
+  if (!anchors.length) return false;
+  if (solid.bulges?.some((b) => Math.abs(b.k) > 1e-4)) return true;
+  if (anchors.length !== 8) return true;
+  const hx = Math.max(0.004, Math.abs(solid.s[0]) / 2);
+  const hy = Math.max(0.004, Math.abs(solid.s[1]) / 2);
+  const hz = Math.max(0.004, Math.abs(solid.s[2] || solid.s[0]) / 2);
+  const expected: Vec3[] = [
+    [-hx, -hy, -hz],
+    [hx, -hy, -hz],
+    [-hx, hy, -hz],
+    [hx, hy, -hz],
+    [-hx, -hy, hz],
+    [hx, -hy, hz],
+    [-hx, hy, hz],
+    [hx, hy, hz],
+  ];
+  return anchors.some((a, i) => {
+    const e = expected[i]!;
+    return Math.hypot(a.p[0] - e[0], a.p[1] - e[1], a.p[2] - e[2]) > 0.002;
+  });
+}
+
 function pathGeometry(solid: Solid): THREE.BufferGeometry | null {
   if (!solid.path) return null;
+  if (solid.t === "box" && !cageEdited(solid)) return null;
   const anchors = normalizeAnchors(solid.anchors);
   if (anchors.length < 3) return null;
   const loops = inferLoops(anchors, solid.loops);
   if (loops.length >= 2) {
-    const cage = meshFromLoops(
-      anchors.map((a) => a.p),
-      loops,
-    );
+    const cage = meshFromLoops(anchors, loops, solid.bulges);
     if (cage) return cage;
   }
   if (anchors.length === 8 && anchors.every((a) => a.kind === "corner")) {
@@ -176,6 +291,79 @@ function pathGeometry(solid: Solid): THREE.BufferGeometry | null {
   const depth = Math.max(0.004, Math.abs(solid.s[2] || 0.06));
   const segs = anchors.some((a) => a.kind === "smooth") ? 8 : 1;
   return extrudeRing(sampleRing(anchors, segs), depth);
+}
+
+export function createChamferBox(w: number, h: number, d: number, ch: number): THREE.BufferGeometry {
+  const hw = w / 2;
+  const hh = h / 2;
+  const hd = d / 2;
+  const t = Math.min(Math.max(ch, 0), hw * 0.49, hh * 0.49, hd * 0.49);
+  const pos: number[] = [];
+  const quad = (a: Vec3, b: Vec3, c: Vec3, d: Vec3) => {
+    pushTri(pos, a, b, c);
+    pushTri(pos, a, c, d);
+  };
+  const v = (x: number, y: number, z: number): Vec3 => [x, y, z];
+  quad(v(hw, -hh + t, -hd + t), v(hw, -hh + t, hd - t), v(hw, hh - t, hd - t), v(hw, hh - t, -hd + t));
+  quad(v(-hw, -hh + t, hd - t), v(-hw, -hh + t, -hd + t), v(-hw, hh - t, -hd + t), v(-hw, hh - t, hd - t));
+  quad(v(-hw + t, hh, -hd + t), v(hw - t, hh, -hd + t), v(hw - t, hh, hd - t), v(-hw + t, hh, hd - t));
+  quad(v(-hw + t, -hh, hd - t), v(hw - t, -hh, hd - t), v(hw - t, -hh, -hd + t), v(-hw + t, -hh, -hd + t));
+  quad(v(-hw + t, -hh + t, hd), v(hw - t, -hh + t, hd), v(hw - t, hh - t, hd), v(-hw + t, hh - t, hd));
+  quad(v(hw - t, -hh + t, -hd), v(-hw + t, -hh + t, -hd), v(-hw + t, hh - t, -hd), v(hw - t, hh - t, -hd));
+  for (const sy of [-1, 1] as const) {
+    for (const sz of [-1, 1] as const) {
+      const y = sy * hh;
+      const z = sz * hd;
+      const yi = sy * (hh - t);
+      const zi = sz * (hd - t);
+      const a = v(-hw + t, y, zi);
+      const b = v(hw - t, y, zi);
+      const c = v(hw - t, yi, z);
+      const d = v(-hw + t, yi, z);
+      if (sy * sz > 0) quad(a, b, c, d);
+      else quad(d, c, b, a);
+    }
+  }
+  for (const sx of [-1, 1] as const) {
+    for (const sz of [-1, 1] as const) {
+      const x = sx * hw;
+      const z = sz * hd;
+      const xi = sx * (hw - t);
+      const zi = sz * (hd - t);
+      const a = v(x, -hh + t, zi);
+      const b = v(x, hh - t, zi);
+      const c = v(xi, hh - t, z);
+      const d = v(xi, -hh + t, z);
+      if (sx * sz < 0) quad(a, b, c, d);
+      else quad(d, c, b, a);
+    }
+  }
+  for (const sx of [-1, 1] as const) {
+    for (const sy of [-1, 1] as const) {
+      const x = sx * hw;
+      const y = sy * hh;
+      const xi = sx * (hw - t);
+      const yi = sy * (hh - t);
+      const a = v(xi, y, -hd + t);
+      const b = v(xi, y, hd - t);
+      const c = v(x, yi, hd - t);
+      const d = v(x, yi, -hd + t);
+      if (sx * sy > 0) quad(a, b, c, d);
+      else quad(d, c, b, a);
+    }
+  }
+  for (const sx of [-1, 1] as const) {
+    for (const sy of [-1, 1] as const) {
+      for (const sz of [-1, 1] as const) {
+        const px: Vec3 = [sx * hw, sy * (hh - t), sz * (hd - t)];
+        const py: Vec3 = [sx * (hw - t), sy * hh, sz * (hd - t)];
+        const pz: Vec3 = [sx * (hw - t), sy * (hh - t), sz * hd];
+        if (sx * sy * sz > 0) pushTri(pos, px, py, pz);
+        else pushTri(pos, px, pz, py);
+      }
+    }
+  }
+  return facesToGeo(pos);
 }
 
 export function flipSolid(solid: Solid, axis: 0 | 1 | 2): Solid {
@@ -217,12 +405,8 @@ export function flipSolid(solid: Solid, axis: 0 | 1 | 2): Solid {
 }
 
 export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
-  const bevel = solid.b ?? 0;
-  const roundBox = solid.t === "box" && (bevel > 0.0008 || (quad === "SR" && bevel === 0));
-  if (!roundBox) {
-    const shaped = pathGeometry(solid);
-    if (shaped) return shaped;
-  }
+  const shaped = pathGeometry(solid);
+  if (shaped) return shaped;
   const sx = Math.sign(solid.s[0]) || 1;
   const sy = Math.sign(solid.s[1]) || 1;
   const sz = Math.sign(solid.s[2]) || 1;
@@ -230,14 +414,27 @@ export function geometryFor(solid: Solid, quad: Quad): THREE.BufferGeometry {
   const b = Math.abs(solid.s[1]);
   const c = Math.abs(solid.s[2]);
   const n = Math.max(3, Math.round(solid.n ?? (quad === "SS" ? 6 : quad === "SR" ? 12 : 16)));
+  const round = solid.b ?? 0;
+  const chamfer = solid.ch ?? 0;
   let geo: THREE.BufferGeometry;
   switch (solid.t) {
     case "box": {
-      const rad = bevel > 0 ? bevel : quad === "SR" ? Math.min(a, b, c) * 0.08 : 0;
-      geo =
-        rad > 0.0008
-          ? new RoundedBoxGeometry(a, b, c, Math.max(1, Math.min(4, Math.round(solid.n ?? 2))), Math.min(rad, Math.min(a, b, c) * 0.49))
-          : new THREE.BoxGeometry(a, b, c);
+      if (round > 0.0008) {
+        geo = new RoundedBoxGeometry(
+          a,
+          b,
+          c,
+          Math.max(1, Math.min(4, Math.round(solid.n ?? 2))),
+          Math.min(round, Math.min(a, b, c) * 0.49),
+        );
+      } else if (chamfer > 0.0008) {
+        geo = createChamferBox(a, b, c, chamfer);
+      } else if (quad === "SR") {
+        const rad = Math.min(a, b, c) * 0.08;
+        geo = new RoundedBoxGeometry(a, b, c, 2, Math.max(0.004, rad));
+      } else {
+        geo = new THREE.BoxGeometry(a, b, c);
+      }
       break;
     }
     case "cyl":

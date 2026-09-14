@@ -1,4 +1,4 @@
-import { Crop, Minus, MousePointer2, PenTool, Plus, Scissors, Spline } from "lucide-react";
+import { Crop, Minus, MousePointer2, Plus, Pyramid, Scissors, Spline } from "lucide-react";
 import { useForge } from "@/lib/forge/store";
 import type { EditTool } from "@/lib/forge/types";
 import { GRID_COLORS, type GridAxis } from "@/lib/forge/snap";
@@ -9,7 +9,7 @@ const TOOLS: { id: EditTool; key: string; label: string; icon: typeof MousePoint
   { id: "a", key: "A", label: "Anchors", icon: Spline },
   { id: "plus", key: "+", label: "Add anchor", icon: Plus },
   { id: "minus", key: "−", label: "Delete anchor", icon: Minus },
-  { id: "shiftc", key: "⇧C", label: "Convert anchor", icon: PenTool },
+  { id: "b", key: "B", label: "Face bulge", icon: Pyramid },
   { id: "c", key: "C", label: "Crop", icon: Scissors },
 ];
 

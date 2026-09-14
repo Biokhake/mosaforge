@@ -54,6 +54,7 @@ export function ForgeApp() {
   const mergeSelected = useForge((s) => s.mergeSelected);
   const flipSelected = useForge((s) => s.flipSelected);
   const cycleGrid = useForge((s) => s.cycleGrid);
+  const setLeftTab = useForge((s) => s.setLeftTab);
   const toast = useForge((s) => s.toast);
   const solids = useForge((s) => s.solids);
   const slot = useForge((s) => s.slot);
@@ -87,15 +88,16 @@ export function ForgeApp() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const k = e.key;
-      if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === "z") {
+      if ((e.metaKey || e.ctrlKey) && (k === "z" || k === "Z" || e.code === "KeyZ")) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         if (e.shiftKey) redo();
         else undo();
         return;
       }
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === "d") {
         e.preventDefault();
         duplicateSelected();
@@ -110,6 +112,11 @@ export function ForgeApp() {
       if (k === "Tab") {
         e.preventDefault();
         cycleGrid();
+        return;
+      }
+      if (k === "`" || e.code === "Backquote") {
+        e.preventDefault();
+        setLeftTab(useForge.getState().leftTab === "kit" ? "solids" : "kit");
         return;
       }
       if (e.shiftKey && (k === "h" || k === "H")) {
@@ -140,10 +147,14 @@ export function ForgeApp() {
         setTool("minus");
         return;
       }
+      if (k === "b" || k === "B") {
+        setTool("b");
+        return;
+      }
       if (k === "c" || k === "C") {
         if (e.shiftKey) {
           e.preventDefault();
-          setTool("shiftc");
+          flipSelected(2);
           return;
         }
         setTool("c");
@@ -158,9 +169,9 @@ export function ForgeApp() {
       if (k === "r" || k === "R" || k === "2") setMode("rotate");
       if (k === "s" || k === "S" || k === "3") setMode("scale");
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, duplicateSelected, removeSelected, setMode, setTool, cropSelected, mergeSelected, flipSelected, cycleGrid]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [undo, redo, duplicateSelected, removeSelected, setMode, setTool, cropSelected, mergeSelected, flipSelected, cycleGrid, setLeftTab]);
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-bg text-fg">
@@ -177,7 +188,7 @@ export function ForgeApp() {
               <ToolRail />
             </div>
             <div className="absolute left-14 top-3 rounded-md bg-elevated/80 px-2 py-1 font-mono text-2xs text-muted">
-              {slot} · {solids.length} · {tool === "shiftc" ? "⇧C" : tool.toUpperCase()} · Tab=그리드
+              {slot} · {solids.length} · {tool.toUpperCase()} · Tab=그리드 · `=패널 · B=불지
             </div>
           </div>
           {toast ? (

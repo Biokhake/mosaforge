@@ -131,6 +131,92 @@ export function constrainMove(
   return { p: snapped, lock: shift ? axis : null };
 }
 
+const CARD: Vec3[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+];
+
+const XZ_45: Vec3[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+  [1, 0, 1],
+  [1, 0, -1],
+  [-1, 0, 1],
+  [-1, 0, -1],
+];
+
+const YZ_45: Vec3[] = [
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+  [0, 1, 1],
+  [0, 1, -1],
+  [0, -1, 1],
+  [0, -1, -1],
+];
+
+const XY_45: Vec3[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [1, 1, 0],
+  [1, -1, 0],
+  [-1, 1, 0],
+  [-1, -1, 0],
+];
+
+export function harnessNormal(grids: Grids): Vec3 | null {
+  const on = AX.filter((a) => grids[a].on);
+  if (on.length !== 1) return null;
+  if (on[0] === "x") return [0, 1, 0];
+  if (on[0] === "y") return [1, 0, 0];
+  return [0, 0, 1];
+}
+
+function nearestDir(v: Vec3, dirs: Vec3[]): Vec3 {
+  const L = Math.hypot(v[0], v[1], v[2]);
+  const len = Math.max(0.008, L);
+  let best = dirs[0]!;
+  let score = -Infinity;
+  for (const d of dirs) {
+    const n = Math.hypot(d[0], d[1], d[2]) || 1;
+    const s = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / n;
+    if (s > score) {
+      score = s;
+      best = d;
+    }
+  }
+  const n = Math.hypot(best[0], best[1], best[2]) || 1;
+  return [(best[0] / n) * len, (best[1] / n) * len, (best[2] / n) * len];
+}
+
+export function harnessDir(v: Vec3, grids: Grids): Vec3 {
+  const n = harnessNormal(grids);
+  if (!n) return nearestDir(v, CARD);
+  if (n[1]) return nearestDir(v, XZ_45);
+  if (n[0]) return nearestDir(v, YZ_45);
+  return nearestDir(v, XY_45);
+}
+
+export function harnessLength(dir: Vec3, hit: Vec3, cell: number): Vec3 {
+  const L = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const nx = dir[0] / L;
+  const ny = dir[1] / L;
+  const nz = dir[2] / L;
+  let mag = hit[0] * nx + hit[1] * ny + hit[2] * nz;
+  mag = Math.max(0.008, Math.abs(mag));
+  if (cell > 0) mag = Math.max(0.008, Math.round(mag / cell) * cell);
+  return [nx * mag, ny * mag, nz * mag];
+}
+
 export const GRID_COLORS: Record<GridAxis, string> = {
   x: "#b42222",
   y: "#3d5c3a",
